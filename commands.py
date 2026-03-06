@@ -108,14 +108,8 @@ def find_and_open_app(app_name_or_path):
                         subprocess.Popen([full_path], shell=True)
                         print(f"  -> Launched: {full_path}")
                         return True
-                        
-                
-
-
-
-
-
     # 5. If still not found
+    print("❌ Application not found.")
     return None
 
 if __name__ == "__main__":
@@ -128,3 +122,22 @@ if __name__ == "__main__":
         print("Example: C:\\Users\\YourName\\Downloads\\my_app.exe")
     else:
         print("\n✅ Application launched successfully.")
+
+#COMMAND: open_chrome
+
+
+def launch_app_from_command(command):
+    """
+    Extract app name from command string and launch it.
+    Example: "sentinal luanch chrome" -> "chrome"
+    """
+    # Remove command prefix if present
+    app_name = command.removeprefix("COMMAND: open_")
+  
+    
+    if not app_name:
+        print("❌ No application specified in command.")
+        return None
+    
+    print(f"🔍 Launching: {app_name}")
+    return find_and_open_app(app_name)
