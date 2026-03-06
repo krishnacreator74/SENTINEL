@@ -70,7 +70,7 @@ Expected:
 
 AI prints response in terminal.
 
-[ ] Make simple CLI test
+[X] Make simple CLI test
 
 User input → send to AI → print response.
 
