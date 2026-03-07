@@ -80,11 +80,11 @@ DAY 2 – COMMAND ROUTER
 
 GOAL: Assistant can execute PC commands.
 
-[ ] Create command handler function:
+[X] Create command handler function:
 
 handle_command(text)
 
-[ ] Detect commands using if statements or dictionary mapping.
+[X] Detect commands using if statements or dictionary mapping.
 
 Example commands to support:
 
@@ -93,13 +93,13 @@ open vscode
 open godot
 open explorer
 
-[ ] Implement system command execution.
+[X] Implement system command execution.
 
 Concept:
 
 run_program(path)
 
-[ ] Find paths to programs on your PC.
+[X] Find paths to programs on your PC.
 
 Examples:
 
@@ -107,7 +107,7 @@ Chrome.exe
 Code.exe
 Godot.exe
 
-[ ] Implement logic:
+[X] Implement logic:
 
 IF input matches command
 → run system command

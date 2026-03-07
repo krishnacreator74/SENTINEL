@@ -1,12 +1,23 @@
 import lmstudio as lms
 
 from commands import launch_app_from_command
+from voice import voice_of_ai
 
+buffer = ""
 
 with lms.Client() as client:
     model = client.llm.model("qwen/qwen3.5-9b")
     for fragment in model.respond_stream("Who are you, and what can you do?"):
         print(fragment.content, end= "", flush=True)
+
+        buffer += fragment.content
+
+
+        if "." in buffer or "?" in buffer or "!" in buffer:
+            voice_of_ai(buffer.strip())
+            buffer = ""
+
+    
     print()
     while True:
         req = input("Enter ur Prompt:")
@@ -16,6 +27,7 @@ with lms.Client() as client:
             
         else:
             print(result)
+            voice_of_ai(result.content)
         print()
         if req == "exit":
             break
