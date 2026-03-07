@@ -127,17 +127,22 @@ if __name__ == "__main__":
 
 
 def launch_app_from_command(command):
-    """
-    Extract app name from command string and launch it.
-    Example: "sentinal luanch chrome" -> "chrome"
-    """
-    # Remove command prefix if present
-    app_name = command.removeprefix("COMMAND: open_")
-  
-    
-    if not app_name:
-        print("❌ No application specified in command.")
+
+    command = command.replace("COMMAND:", "").strip()
+
+    parts = command.split()
+
+    if len(parts) < 2:
+        print("❌ Invalid command format")
+        return None
+
+    action = parts[0]
+    app_name = parts[1]
+
+    if action != "open":
+        print("❌ Unsupported command:", action)
         return None
     
     print(f"🔍 Launching: {app_name}")
+
     return find_and_open_app(app_name)
