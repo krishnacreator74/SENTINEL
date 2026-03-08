@@ -8,8 +8,9 @@ model = WhisperModel("tiny",device="cpu", compute_type="int8")
 
 def listen():
 
-    duration = 4
+    duration = 4 # seconds
     sample_rate = 16000
+
 
     print("Listening...")
 

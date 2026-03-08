@@ -1,5 +1,5 @@
 
-
+from voice import voice_of_ai
 import subprocess
 import os
 import sys
@@ -139,10 +139,15 @@ def launch_app_from_command(command):
     action = parts[0]
     app_name = parts[1]
 
+    if action == "open":
+        voice_of_ai(f"Opening {app_name}")
+        print(f"🔍 Launching: {app_name}")
+        return find_and_open_app(app_name)
+
     if action != "open":
         print("❌ Unsupported command:", action)
         return None
     
-    print(f"🔍 Launching: {app_name}")
+    
 
-    return find_and_open_app(app_name)
+    

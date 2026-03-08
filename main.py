@@ -3,6 +3,7 @@ from ears import listen
 from commands import launch_app_from_command
 from voice import voice_of_ai
 import time
+from wake import wait_for_wake
 
 buffer = ""
 
@@ -17,21 +18,24 @@ with lms.Client() as client:
     #     if "." in buffer or "?" in buffer or "!" in buffer:
     #         voice_of_ai(buffer.strip())
     #         buffer = ""
-
+    last_wake = 0
     
     while True:
-        time.sleep(0.5)
+        time.sleep(1)
+
+        if time.time() - last_wake < 3:
+            continue
+
+        wait_for_wake()
+        last_wake = time.time()
+        voice_of_ai("yes?")
 
         req = listen()
         print("You:", req)
-
-        WAKE_WORDS = ["sentinel", "central", "you sent", "your center"]
-
-        if not any(w in req for w in WAKE_WORDS):
+            
+        if not req or req.strip() == "":
+            print("No speech detected.")
             continue
-
-        # remove wake word
-        req = req.replace("sentinel", "").strip()
 
         buffer = ""
 

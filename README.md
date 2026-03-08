@@ -1,228 +1,128 @@
-# SENTINEL
-Local LLM powered Better jarvis
+# SENTINEL 🎙️
+
+A local, privacy-focused voice-activated AI assistant that runs entirely on your machine.
+
+## Features
+
+- **Wake Word Detection** - Listens for "Sentinel" to activate
+- **Voice Recognition** - Converts speech to text using Faster Whisper
+- **AI-Powered Responses** - Uses LM Studio with Qwen3.5-9B for natural conversations
+- **Voice Output** - Speaks responses using Piper TTS
+- **App Launcher** - Opens applications via voice commands
+
+## Requirements
+
+- Windows 11
+- Python 3.10+
+- [LM Studio](https://lmstudio.ai/) (for the LLM)
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/sentinel.git
+cd sentinel
+```
 
-PROJECT GOAL
-Build a simple local AI assistant that can:
-• Talk to LM Studio (Qwen model)
-• Execute system commands
-• Route questions to AI
-• Run in a terminal loop
+2. Install Python dependencies:
+```bash
+pip install sounddevice numpy piper-tts faster-whisper openwakeword lmstudio
+```
 
-STACK
-LM Studio (AI brain)
-Python or Node.js backend
-Terminal interface (CLI)
+3. Download required models:
+   - **Whisper** - The `tiny` model is downloaded automatically
+   - **Piper TTS** - `en_US-hfc_female-medium.onnx` included in `voice_models/`
+   - **Wake Word** - `sentinel.onnx` included in `voice_models/`
+   - **LLM** - Use LM Studio to download `qwen/qwen3.5-9b`
 
----
+4. Configure LM Studio:
+   - Open LM Studio
+   - Download and load the Qwen3.5-9B model
+   - Ensure the local server is running on port 1234
 
-DAY 0 – PREP
+## Usage
 
-[X] Qwen model downloaded
-[X] LM Studio Local Server enabled
-[X] Confirm API running at:
+Run the main script:
+```bash
+python main.py
+```
 
-http://localhost:1234
+### Voice Commands
 
-[X] Create project folder
+- Say "Sentinel" to wake the assistant
+- Once activated, speak your request
+- To launch apps, say: "Open [app name]" (e.g., "Open chrome", "Open notepad")
 
-jarvis-ai/
+### Example Interaction
 
-[X] Inside folder create files:
+```
+You: Sentinel
+Sentinel: yes?
+You: what's the weather like today?
+Sentinel: [responds with weather info]
 
-main.py
-ai.py
-commands.py
-config.py
-logs.txt
+You: Sentinel
+Sentinel: yes?
+You: open chrome
+Sentinel: Opening chrome
+[Chrome launches]
+```
 
----
+## Project Structure
 
-DAY 1 – CONNECT TO AI
+```
+SENTINEL/
+├── main.py              # Main application loop
+├── voice.py             # Text-to-speech (Piper)
+├── ears.py              # Speech recognition (Whisper)
+├── wake.py              # Wake word detection
+├── commands.py          # Application launcher
+├── config.py            # Configuration
+├── ai.py                # AI integration
+├── known_apps.json      # Cached application paths
+├── voice_models/        # TTS and wake word models
+│   ├── en_US-hfc_female-medium.onnx
+│   ├── sentinel.onnx
+│   └── ...
+└── README.md
+```
 
-GOAL: Send a prompt to LM Studio and receive a response.
+## Configuration
 
-[X] Start LM Studio local server
+### Wake Word Sensitivity
 
-LM Studio → Developer → Start Local Server
+Edit `wake.py` to adjust detection threshold:
+```python
+threshold = 0.1  # Lower = more sensitive
+```
 
-[X] Open terminal in project folder
+### Listening Duration
 
-[X] Implement API request to LM Studio
+Edit `ears.py` to change how long it listens:
+```python
+duration = 4  # seconds
+```
 
-Endpoint example:
+### Supported Launch Locations
 
-http://localhost:1234/v1/chat/completions
+The app launcher scans these directories by default:
+- `C:\Program Files`
+- `C:\Program Files (x86)`
+- `C:\Users\%USERNAME%\AppData\Local`
+- `C:\Users\%USERNAME%\AppData\Roaming`
+- `C:\ProgramData\Microsoft\Windows\Start Menu\Programs`
 
-[X] Create function:
+## Troubleshooting
 
-ask_ai(prompt)
+**"No speech detected"** - Speak clearly and ensure microphone is working
 
-Responsibilities:
-• send prompt to LM Studio
-• receive response
-• return AI message
+**LM Studio not connecting** - Ensure LM Studio server is running on port 1234
 
-[X] Test with prompt:
+**Wake word not triggering** - Adjust the `threshold` in `wake.py` or speak louder
 
-Hello who are you
+**App not launching** - Try using the full application name (e.g., "microsoft edge" instead of "edge")
 
-Expected:
+## License
 
-AI prints response in terminal.
+MIT License
 
-[X] Make simple CLI test
-
-User input → send to AI → print response.
-
----
-
-DAY 2 – COMMAND ROUTER
-
-GOAL: Assistant can execute PC commands.
-
-[X] Create command handler function:
-
-handle_command(text)
-
-[X] Detect commands using if statements or dictionary mapping.
-
-Example commands to support:
-
-open chrome
-open vscode
-open godot
-open explorer
-
-[X] Implement system command execution.
-
-Concept:
-
-run_program(path)
-
-[X] Find paths to programs on your PC.
-
-Examples:
-
-Chrome.exe
-Code.exe
-Godot.exe
-
-[X] Implement logic:
-
-IF input matches command
-→ run system command
-
-ELSE
-→ send to AI
-
-Program flow:
-
-User input
-→ command router
-→ system command OR AI
-
----
-
-DAY 3 – TURN IT INTO AN ASSISTANT
-
-GOAL: Make it interactive and usable.
-
-[ ] Add infinite input loop
-
-while True:
-get user input
-
-[ ] Add wake word:
-
-jarvis
-
-Example commands:
-
-jarvis open chrome
-jarvis open vscode
-jarvis what is a black hole
-
-[ ] Parse command after wake word.
-
-Example:
-
-input = "jarvis open chrome"
-
-remove "jarvis"
-send rest to command router
-
-[ ] Add help command.
-
-jarvis help
-
-Output example:
-
-Available commands:
-open chrome
-open vscode
-open godot
-open explorer
-
-[ ] Add exit command.
-
-jarvis exit
-
-Program stops.
-
-[ ] Add logging.
-
-Save every command to:
-
-logs.txt
-
----
-
-OPTIONAL FEATURES (IF YOU FINISH EARLY)
-
-[ ] System info command
-
-jarvis cpu
-jarvis ram
-
-[ ] File search
-
-jarvis find filename
-
-[ ] AI coding helper
-
-jarvis explain this code
-
-[ ] Add command history
-
----
-
-PROJECT STRUCTURE
-
-jarvis-ai/
-
-main.py
-Program loop and input handling
-
-ai.py
-LM Studio communication
-
-commands.py
-System commands
-
-config.py
-Settings and paths
-
-logs.txt
-Command history
-
----
-
-VERSION 1 COMPLETE WHEN:
-
-[ ] AI responses work
-[ ] System commands launch apps
-[ ] Commands routed correctly
-[ ] Wake word works
-[ ] Assistant runs continuously
-
-At this point you have a working local AI assistant.
