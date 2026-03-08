@@ -29,7 +29,7 @@ with lms.Client() as client:
         wait_for_wake()
         last_wake = time.time()
         voice_of_ai("yes?")
-
+        continue
         req = listen()
         print("You:", req)
             
