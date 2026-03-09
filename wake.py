@@ -45,7 +45,7 @@ def wait_for_wake():
             audio = audio.flatten()
 
             score = model.predict(audio)["sentinel"]
-
+            #print(score)
             scores.append(score)
             if len(scores) > 5:
                 scores.pop(0)

@@ -22,15 +22,24 @@ def save_known_apps(apps):
 # Configuration
 START_DIRS = [
     r"C:\Program Files",
+    r"C:\Users\mskri\OneDrive\Desktop\Everything",
     r"C:\Program Files (x86)",
     r"C:\Users\%USERNAME%\AppData\Local",
     r"C:\Users\%USERNAME%\AppData\Roaming",
-    r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs", # Start Menu Programs
+    r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+    r"C:\Users\%USERNAME%\AppData\Roaming\Microsoft\Windows\Start Menu\Programs" # Start Menu Programs
 ]
 
 # Dictionary of known apps (Optional, for faster lookup without searching)
 KNOWN_APPS = load_known_apps()
 
+def launch_url_shortcut(path):
+    with open(path, "r") as f:
+        for line in f:
+            if line.startswith("URL="):
+                url = line.replace("URL=", "").strip()
+                subprocess.Popen(f'start "" "{url}"', shell=True)
+                return True
 
 def find_and_open_app(app_name_or_path):
     """
@@ -87,7 +96,15 @@ def find_and_open_app(app_name_or_path):
             # Optimization: check filenames only, not deep inside subfolders unless necessary
             # But to be thorough, we check files in the immediate directory
             for file in files:
-                if file.lower().replace(".exe","") == search_name or file == app_name_or_path:
+                file_lower = file.lower()
+
+                if not (file_lower.endswith(".exe") or file_lower.endswith(".lnk") or file_lower.endswith(".url")):
+                    continue
+
+                name = file_lower.replace(".exe","").replace(".lnk","").replace(".url","")
+                name = name.replace(" ", "")
+
+                if search_name in name:
                     full_path = os.path.join(root, file)
                     if os.path.isfile(full_path) and os.access(full_path, os.X_OK):
 
@@ -105,7 +122,10 @@ def find_and_open_app(app_name_or_path):
                             print(f"  -> Saved to {DATA_FILE}")
                             
                         
-                        subprocess.Popen([full_path], shell=True)
+                        if full_path.endswith(".url"):
+                            launch_url_shortcut(full_path)
+                        else:
+                            subprocess.Popen(full_path, shell=True)
                         print(f"  -> Launched: {full_path}")
                         return True
     # 5. If still not found
@@ -137,7 +157,7 @@ def launch_app_from_command(command):
         return None
 
     action = parts[0]
-    app_name = parts[1]
+    app_name = " ".join(parts[1:])
 
     if action == "open":
         voice_of_ai(f"Opening {app_name}")
