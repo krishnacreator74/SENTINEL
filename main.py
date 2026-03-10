@@ -6,7 +6,7 @@ import time
 from wake import wait_for_wake
 from widget import SentinelWidget
 import threading
-
+import numpy as np
 
 buffer = ""
 
@@ -33,7 +33,7 @@ def run_sentinel():
 
             if time.time() - last_wake < 3:
                 continue
-
+            
             wait_for_wake()
             last_wake = time.time()
             voice.voice_of_ai("yes?")
