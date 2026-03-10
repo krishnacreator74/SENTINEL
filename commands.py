@@ -4,6 +4,7 @@ import subprocess
 import os
 import sys
 import json
+from ears import listen
 
 DATA_FILE = "known_apps.json"
 
@@ -152,7 +153,8 @@ def launch_app_from_command(command):
 
     parts = command.split()
 
-    if len(parts) < 2:
+
+    if len(parts) == 0:
         print("❌ Invalid command format")
         return None
 
@@ -164,10 +166,39 @@ def launch_app_from_command(command):
         print(f"🔍 Launching: {app_name}")
         return find_and_open_app(app_name)
 
+
+    
+    if action == "shutdown":
+        voice_of_ai("Are you sure you want to shut down?")
+
+        response = listen().lower()
+
+        if "yes" in response or "yeah" in response or "do it" in response:
+            voice_of_ai("Shutting down the system")
+            subprocess.run(["shutdown", "/s", "/t", "0"])
+            return True
+        else:
+            voice_of_ai("Shutdown cancelled")
+            return False
+
+    if action == "restart":
+        voice_of_ai("Restarting the system")
+        subprocess.run(["shutdown", "/r", "/t", "0"])
+        return True
+
+    if action == "sleep":
+        voice_of_ai("Putting the system to sleep")
+        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
+        return True
+
+    if action == "lock":
+        
+        voice_of_ai("Locking the computer")
+        subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
+        return True
+
     if action != "open":
         print("❌ Unsupported command:", action)
         return None
-    
-    
 
     

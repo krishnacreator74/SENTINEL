@@ -4,7 +4,7 @@ from faster_whisper import WhisperModel
 
 
 # load whisper model
-model = WhisperModel("tiny",device="cpu", compute_type="int8")
+model = WhisperModel("medium",device="cuda", compute_type="int8")
 
 def listen():
 

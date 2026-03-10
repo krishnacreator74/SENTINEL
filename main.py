@@ -56,8 +56,13 @@ def run_sentinel():
                 buffer += text
 
                 # detect commands
-                if buffer.startswith("COMMAND:") and len(buffer.split()) >= 3:
-                    launch_app_from_command(buffer.strip())
+                if "COMMAND:" in buffer and "\n" in buffer:
+                    command = buffer.split("COMMAND:", 1)[1].strip()
+                    full_command = "COMMAND: " + command
+
+                    print(full_command)
+                    launch_app_from_command(full_command)
+
                     buffer = ""
                     break
 
