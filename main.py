@@ -7,6 +7,9 @@ from wake import wait_for_wake
 from widget import SentinelWidget
 import threading
 import numpy as np
+from memory_chat import ChatMemory
+
+chat_memory = ChatMemory()
 
 buffer = ""
 
@@ -26,6 +29,7 @@ def run_sentinel():
             last_wake = time.time()
             voice.voice_of_ai("yes?")
             req = listen()
+            chat_memory.add_user(req)
             print("You:", req)
 
             if not req or req.strip() == "":
@@ -33,8 +37,11 @@ def run_sentinel():
                 continue
 
             buffer = ""
-            for fragment in model.respond_stream(req):
+            full_response = ""
+            messages = chat_memory.get_messages()
+            for fragment in model.respond_stream({"messages": messages}):
                 text = fragment.content
+                full_response += text
                 print(text, end="", flush=True)
                 buffer += text
 
@@ -51,6 +58,9 @@ def run_sentinel():
                     buffer = ""
 
             print()
+
+            chat_memory.add_assistant(full_response.strip())
+
             if req == "exit":
                 break
 
