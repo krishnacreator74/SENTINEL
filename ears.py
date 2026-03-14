@@ -8,27 +8,7 @@ HALLUCINATIONS = {
     "thanks for watching", "thank you for watching",
     "please subscribe", "like and subscribe",
     "see you next time", "bye", "goodbye", ".",
-}  # NOTE: no empty string — "" in any_string is always True in Python
-
-def calibrate(device=None, duration=1.5):
-    print("[calibrate] Stay quiet for 1.5s...")
-    sample_rate   = 16000
-    chunk_samples = int(sample_rate * 0.1)
-    rms_vals      = []
-
-    with sd.InputStream(samplerate=sample_rate, channels=1,
-                        dtype="float32", device=device) as stream:
-        for _ in range(int(duration / 0.1)):
-            chunk, _ = stream.read(chunk_samples)
-            rms_vals.append(float(np.sqrt(np.mean(chunk.flatten() ** 2))))
-
-    noise_peak     = float(np.max(rms_vals))
-    # Your mic peaks at ~0.0003 noise, ~0.003 voice
-    # Use 1.5x noise_peak as speech threshold, with a very low floor
-    speech_thresh  = max(0.0008, noise_peak * 1.5)
-    silence_thresh = max(0.0005, noise_peak * 1.1)
-    print(f"[calibrate] noise_peak={noise_peak:.5f} → speech_thresh={speech_thresh:.5f}  silence_thresh={silence_thresh:.5f}")
-    return speech_thresh, silence_thresh
+}
 
 def pick_device():
     devices = sd.query_devices()
@@ -43,10 +23,17 @@ def pick_device():
     return int(choice) if choice else None
 
 _DEVICE = pick_device()
-_SPEECH_THRESH, _SILENCE_THRESH = calibrate(device=_DEVICE)
+
+# thresholds set externally by wake.py after clean calibration
+_SPEECH_THRESH  = 0.001
+_SILENCE_THRESH = 0.0005
+
+def set_thresholds(speech, silence):
+    global _SPEECH_THRESH, _SILENCE_THRESH
+    _SPEECH_THRESH  = speech
+    _SILENCE_THRESH = silence
 
 def listen():
-
     sample_rate    = 16000
     chunk_duration = 0.1
     chunk_samples  = int(sample_rate * chunk_duration)
@@ -55,7 +42,7 @@ def listen():
     silence_thresh = _SILENCE_THRESH
     pre_roll_n     = int(0.4  / chunk_duration)
     silence_n      = int(1.0  / chunk_duration)
-    min_speech_n   = 2   # just 2 chunks = 0.2s of speech needed
+    min_speech_n   = 2
     max_wait_n     = int(10.0 / chunk_duration)
     max_n          = int(30.0 / chunk_duration)
 
@@ -72,7 +59,6 @@ def listen():
                         dtype="float32", device=_DEVICE) as stream:
 
         for _ in range(max_n):
-
             chunk, _ = stream.read(chunk_samples)
             chunk    = chunk.flatten()
             rms      = float(np.sqrt(np.mean(chunk ** 2)))
@@ -105,7 +91,6 @@ def listen():
                     break
 
     if not speech_buf or speech_count < min_speech_n:
-        print("[listen] No speech detected.")
         return ""
 
     audio = np.concatenate(speech_buf)

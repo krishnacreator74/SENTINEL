@@ -29,3 +29,5 @@ def voice_of_ai(text):
 
     if widget:
         widget.set_idle()
+    
+    sd.sleep(800)

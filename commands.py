@@ -5,6 +5,7 @@ import os
 import sys
 import json
 from ears import listen
+import time
 
 DATA_FILE = "known_apps.json"
 
@@ -168,7 +169,7 @@ def launch_app_from_command(command):
 
 
     
-    if action == "shutdown":
+    if action == "shutdown" or action == "shut down":
         voice_of_ai("Are you sure you want to shut down?")
 
         response = listen().lower()
