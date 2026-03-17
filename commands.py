@@ -150,10 +150,15 @@ if __name__ == "__main__":
 
 def launch_app_from_command(command):
 
-    command = command.replace("COMMAND:", "").strip()
+    command = command.replace("COMMAND:", "").strip().lower()
+
+    # Normalize multi-word power commands BEFORE splitting
+    command = command.replace("shut down", "shutdown")
+    command = command.replace("put to sleep", "sleep")
+    command = command.replace("suspend", "sleep")
+    command = command.replace("hibernate", "sleep")
 
     parts = command.split()
-
 
     if len(parts) == 0:
         print("❌ Invalid command format")
@@ -162,29 +167,19 @@ def launch_app_from_command(command):
     action = parts[0]
     app_name = " ".join(parts[1:])
 
-    if action == "open":
+    if action == "open" or action == "launch" or action == "start":
         voice_of_ai(f"Opening {app_name}")
         print(f"🔍 Launching: {app_name}")
         return find_and_open_app(app_name)
 
-
-    
-    if action == "shutdown" or action == "shut down":
-        voice_of_ai("Are you sure you want to shut down?")
-
-        response = listen().lower()
-
-        if "yes" in response or "yeah" in response or "do it" in response:
-            voice_of_ai("Shutting down the system")
-            subprocess.run(["shutdown", "/s", "/t", "0"])
-            return True
-        else:
-            voice_of_ai("Shutdown cancelled")
-            return False
+    if action == "shutdown":
+        voice_of_ai("Shutting down the system")
+        subprocess.run(["shutdown", "/s", "/t", "5"])
+        return True
 
     if action == "restart":
         voice_of_ai("Restarting the system")
-        subprocess.run(["shutdown", "/r", "/t", "0"])
+        subprocess.run(["shutdown", "/r", "/t", "5"])
         return True
 
     if action == "sleep":
@@ -193,13 +188,10 @@ def launch_app_from_command(command):
         return True
 
     if action == "lock":
-        
         voice_of_ai("Locking the computer")
         subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
         return True
 
-    if action != "open":
-        print("❌ Unsupported command:", action)
-        return None
-
+    print("❌ Unsupported command:", action)
+    return None
     

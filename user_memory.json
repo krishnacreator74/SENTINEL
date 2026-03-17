@@ -1,6 +1,5 @@
 {
- "editor": "vscode",
- "animation_tool": "aseprite",
- "language": "english",
- "tone": "casual_genz"
+    "interests": [
+        "games"
+    ]
 }
