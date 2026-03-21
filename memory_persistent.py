@@ -32,7 +32,7 @@ def update_memory(new_data):
             # merge lists
             if isinstance(memory[key], list) and isinstance(value, list):
 
-                merged = list(set(memory[key] + value))
+                merged = list(dict.fromkeys(memory[key] + value))
                 memory[key] = merged
 
             # merge strings

@@ -38,6 +38,8 @@ In that case simply acknowledge the request briefly or continue the conversation
 When discussing code or debugging, explain the reasoning clearly so the user can learn from it.
 
 Sometimes ask a short follow up question if it helps clarify the user goal.
+
+
 """
 
 MODEL_NAME = "google/gemma-3-1b"

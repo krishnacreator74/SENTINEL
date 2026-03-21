@@ -184,3 +184,4 @@ known_apps.json
 /training_data
 diagnoistic.py
 /openWakeWord
+user_memory.json

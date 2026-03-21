@@ -21,19 +21,25 @@ def analyze_and_store_memory(model, user_text):
             {
                 "role": "system",
                 "content": """
-Extract long term user information.
+Extract ONLY important long-term memory.
 
-Return ONLY JSON.
+If nothing important → return {}
 
-Example
+IMPORTANT means:
+- user is building something
+- making a decision
+- expressing preference
+- defining goals
 
-User: I like games
-Output:
-{"interests":["games"]}
+Ignore small talk.
 
-If nothing important exists return {}
-
-Do not use markdown.
+Return JSON:
+{
+  "projects": [],
+  "decisions": [],
+  "preferences": [],
+  "skills": []
+}
 """
             },
             {

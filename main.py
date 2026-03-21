@@ -14,6 +14,7 @@ from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 import json
 from router import fast_route
 
+
 memory_counter = 0
 MEMORY_INTERVAL = 5
 
@@ -29,6 +30,26 @@ def clean_for_voice(text):
     text = text.replace("e.g.", "for example")
     text = text.replace("i.e.", "that is")
     return text
+
+def validate_messages(messages):
+    fixed = []
+    last_role = None
+
+    for msg in messages:
+        if msg["role"] == last_role:
+            continue
+        fixed.append(msg)
+        last_role = msg["role"]
+
+    return fixed
+
+def run_memory_async(combined):
+    def task():
+        with lms.Client() as client:
+            model = client.llm.model(MODEL_NAME)
+            analyze_and_store_memory(model, combined)
+
+    threading.Thread(target=task, daemon=True).start()
 
 def run_sentinel():
     
@@ -56,66 +77,52 @@ def run_sentinel():
             
             if fast_route(req):
                 continue
-
-            chat_memory.add_user(req)
-
+                        
             if not req or len(req.strip()) < 2:
                 print("No speech detected.")
-                continue
+                continue            
+
+            if not chat_memory.messages or chat_memory.messages[-1]["role"] != "user":
+
+                chat_memory.add_user(req)
+
+
 
             buffer = ""
             full_response = ""
+            memory = load_memory()
 
-            messages = [
-                {
-                "role": "system",
-                "content": SYSTEM_PROMPT + "\n\nKnown user information:\n" + json.dumps(memory, indent=2)
-                }
-            ] + chat_memory.get_messages()
+            messages = validate_messages(
+                [
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT + "\n\nKnown user information:\n" + json.dumps(memory, indent=2)
+                    }
+                ] + chat_memory.get_messages()
+            )
+            
+            try:
+                for fragment in model.respond_stream({
+                    "messages": messages,
+                    "temperature": TEMPERATURE,
+                    "top_p": TOP_P,
+                    "top_k": TOP_K
+                    }):
 
-            for fragment in model.respond_stream({
-                "messages": messages,
-                "temperature": TEMPERATURE,
-                "top_p": TOP_P,
-                "top_k": TOP_K
-                }):
+                    text = fragment.content
+                    full_response += text
+                    print(text, end="", flush=True)
+                    buffer += text
 
-                text = fragment.content
-                full_response += text
-                print(text, end="", flush=True)
-                buffer += text
 
-                # if "COMMAND:" in buffer and "\n" in buffer:
 
-                #     command = buffer.split("COMMAND:",1)[1].split("\n")[0].strip()
+                    if re.search(r"[.!?]", buffer):
+                        voice.voice_of_ai(clean_for_voice(buffer.strip()))
+                        buffer = ""
 
-                #     user_text = req.lower()
-
-                #     allowed_triggers = [
-                #                 "open",
-                #                 "launch",
-                #                 "start",
-                #                 "run",
-                #                 "sleep",
-                #                 "shutdown",
-                #                 "restart",
-                #                 "lock"
-                #             ]
-
-                #     if any(t in user_text for t in allowed_triggers):
-
-                #         print("Executing command:", command)
-                #         launch_app_from_command("COMMAND: " + command)
-
-                #     else:
-                #         print("Ignoring hallucinated command:", command)
-
-                #     buffer = ""
-                #     break
-
-                if any(p in buffer for p in [".", "?", "!"]):
-                    voice.voice_of_ai(clean_for_voice(buffer.strip()))
-                    buffer = ""
+            except Exception as e:
+                print("Model error:", e)
+                continue
 
             print()
 
@@ -127,12 +134,15 @@ def run_sentinel():
 
             memory_counter += 1
 
-            if memory_counter >= MEMORY_INTERVAL:
+            
+            combined = f"""
+            User: {req}
+            Assistant: {full_response}
+            """
+            if req:
+                run_memory_async(combined)
+                
 
-                analyze_and_store_memory(model, req)
-                memory = load_memory()
-
-                memory_counter = 0
 
             chat_memory.add_assistant(full_response.strip())
 
