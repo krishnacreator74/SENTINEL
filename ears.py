@@ -24,7 +24,6 @@ def pick_device():
 
 _DEVICE = pick_device()
 
-# thresholds set externally by wake.py after clean calibration
 _SPEECH_THRESH  = 0.001
 _SILENCE_THRESH = 0.0005
 
@@ -40,11 +39,12 @@ def listen():
 
     speech_thresh  = _SPEECH_THRESH
     silence_thresh = _SILENCE_THRESH
-    pre_roll_n     = int(0.4  / chunk_duration)
-    silence_n      = int(1.0  / chunk_duration)
-    min_speech_n   = 2
-    max_wait_n     = int(10.0 / chunk_duration)
-    max_n          = int(30.0 / chunk_duration)
+
+    pre_roll_n   = int(0.4  / chunk_duration)   # 4 chunks
+    silence_n    = int(1.8  / chunk_duration)   # 18 chunks — was 10, longer pause tolerance
+    min_speech_n = 2
+    max_wait_n   = int(10.0 / chunk_duration)   # 100 chunks before any speech
+    max_n        = int(45.0 / chunk_duration)   # 450 chunks — was 300, allow longer sentences
 
     print(f"Listening...  (thresh={speech_thresh:.5f})")
 
@@ -77,32 +77,53 @@ def listen():
                 else:
                     waited += 1
                     if waited >= max_wait_n:
-                        print(f"[listen] Timeout. Last rms={rms:.5f} thresh={speech_thresh:.5f}")
+                        print(f"[listen] Timeout. rms={rms:.5f}")
                         return ""
             else:
                 speech_buf.append(chunk)
+
                 if rms > silence_thresh:
                     speech_count  += 1
                     silence_count  = 0
                 else:
                     silence_count += 1
 
-                if silence_count >= silence_n and speech_count >= min_speech_n:
+                # Progressive silence threshold — the more speech we have,
+                # the longer we wait before cutting off.
+                # Short utterance (<2s): 1.8s silence to end
+                # Long utterance (>5s): 2.5s silence to end
+                speech_seconds = speech_count * chunk_duration
+                if speech_seconds > 5.0:
+                    effective_silence_n = int(2.5 / chunk_duration)  # 25 chunks
+                else:
+                    effective_silence_n = silence_n                   # 18 chunks
+
+                if silence_count >= effective_silence_n and speech_count >= min_speech_n:
                     break
 
     if not speech_buf or speech_count < min_speech_n:
         return ""
 
     audio = np.concatenate(speech_buf)
-    print(f"[listen] {len(audio)/sample_rate:.1f}s  rms={np.sqrt(np.mean(audio**2)):.5f}  speech_chunks={speech_count}")
+    duration = len(audio) / sample_rate
+    print(f"[listen] {duration:.1f}s  rms={np.sqrt(np.mean(audio**2)):.5f}  speech_chunks={speech_count}")
 
-    segments, _ = model.transcribe(
-        audio, language="en", vad_filter=False,
-        beam_size=5, temperature=0.0,
+    segments, info = model.transcribe(
+        audio,
+        language="en",
+        vad_filter=True,              # let Whisper's own VAD help on long clips
+        vad_parameters={
+            "threshold": 0.3,         # permissive — don't drop quiet speech
+            "min_speech_duration_ms": 100,
+            "min_silence_duration_ms": 800,
+        },
+        beam_size=5,
+        temperature=0.0,
         condition_on_previous_text=False,
     )
 
     text = ""
+    any_good_segment = False
     for seg in segments:
         print(f"[segment] no_speech_prob={seg.no_speech_prob:.3f}  '{seg.text}'")
         if seg.no_speech_prob > 0.85:
@@ -111,6 +132,12 @@ def listen():
         if any(h in cleaned for h in HALLUCINATIONS):
             continue
         text += seg.text
+        any_good_segment = True
+
+    # Only reject if EVERY segment was noise — not just the last one
+    if not any_good_segment:
+        print("[listen] All segments rejected as noise")
+        return ""
 
     result = text.strip().lower()
     if result.strip(".,!? ") in HALLUCINATIONS or len(result.strip(".,!? ")) < 2:

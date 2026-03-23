@@ -1,3 +1,4 @@
+# router.py
 from commands import launch_app_from_command
 import re
 
@@ -8,15 +9,14 @@ FILLER_WORDS = {
     "app", "application", "browser", "me", "up", "now"
 }
 
-# Known app aliases - catches fused words like "openbrave" -> "brave"
 APP_ALIASES = {
-    "openbrave": "brave",
-    "openfirefox": "firefox",
-    "openchrome": "chrome",
-    "launchsteam": "steam",
-    "openspotify": "spotify",
-    "opendiscord": "discord",
-    "opensteam": "steam",
+    "openbrave":    "brave",
+    "openfirefox":  "firefox",
+    "openchrome":   "chrome",
+    "launchsteam":  "steam",
+    "openspotify":  "spotify",
+    "opendiscord":  "discord",
+    "opensteam":    "steam",
 }
 
 SYSTEM_COMMANDS = {
@@ -28,11 +28,21 @@ SYSTEM_COMMANDS = {
     "hibernate": "sleep",
 }
 
+# If any of these words appear in the utterance, it's NOT an app launch
+DISQUALIFIERS = {
+    "what", "who", "where", "when", "why", "how",
+    "is", "are", "do", "does", "did", "was", "were",
+    "tell", "search", "find", "news", "latest", "game",
+    "date", "today", "weather", "price", "show", "give",
+    "release", "update", "version", "world", "market",
+    "about", "explain", "describe", "help", "difference",
+    "between", "versus", "vs", "compare", "which", "best",
+}
+
 
 def _clean(text: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace."""
     text = text.lower().strip()
-    text = re.sub(r"[^\w\s]", " ", text)   # replace punct with space (not empty)
+    text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -42,42 +52,47 @@ def fast_route(text: str) -> bool:
         return False
 
     cleaned = _clean(text)
-    words = cleaned.split()
+    words   = cleaned.split()
     word_set = set(words)
 
-    # ---- SYSTEM COMMANDS (highest priority) ----
+    # ── System commands (highest priority, no disqualifier check) ────────────
     for keyword, command in SYSTEM_COMMANDS.items():
         if keyword in word_set:
-            print(f"[Router] System command detected: {command}")
+            print(f"[Router] System command: {command}")
             launch_app_from_command(command)
             return True
 
-    # ---- FUSED WORD ALIAS (e.g. "openbrave" with no space) ----
+    # ── Disqualify anything that looks like a question or info request ───────
+    if word_set.intersection(DISQUALIFIERS):
+        return False
+
+    # ── Fused alias (e.g. "openbrave") ──────────────────────────────────────
     for fused, app in APP_ALIASES.items():
         if fused in words:
-            print(f"[Router] Fused app launch detected: {app}")
+            print(f"[Router] Fused alias: {app}")
             launch_app_from_command(f"open {app}")
             return True
 
-    # ---- OPEN / LAUNCH APP (trigger word present) ----
+    # ── Trigger word must be in the first 2 words ────────────────────────────
+    first_two = set(words[:2])
     for trigger in OPEN_TRIGGERS:
-        if trigger in word_set:
+        if trigger in first_two:
             idx = words.index(trigger)
             app_words = [w for w in words[idx + 1:] if w not in FILLER_WORDS]
 
-            if app_words:
+            # Require at least one real app word and at most 3
+            # (long tails are almost always not app names)
+            if 1 <= len(app_words) <= 3:
                 app = " ".join(app_words)
-                print(f"[Router] App launch detected: {app}")
+                print(f"[Router] App launch: {app}")
                 launch_app_from_command(f"open {app}")
                 return True
 
-    # ---- BARE APP NAME (no trigger word, single word only to avoid false positives) ----
-    # Only fires if the entire utterance is 1-2 words and not a question
-    question_words = {"what", "who", "where", "when", "why", "how", "is", "are", "do", "does"}
-    if len(words) <= 2 and not word_set.intersection(question_words):
+    # ── Bare name: entire utterance is 1-2 words, no question words ─────────
+    if len(words) <= 2:
         bare = " ".join(w for w in words if w not in FILLER_WORDS)
         if bare:
-            print(f"[Router] Bare app name detected: {bare}")
+            print(f"[Router] Bare app: {bare}")
             launch_app_from_command(f"open {bare}")
             return True
 

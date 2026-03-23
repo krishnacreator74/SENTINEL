@@ -39,7 +39,11 @@ When discussing code or debugging, explain the reasoning clearly so the user can
 
 Sometimes ask a short follow up question if it helps clarify the user goal.
 
+If the user asks for information that may require up to date knowledge or external data, respond with:
 
+SEARCH: <query>
+
+"You MUST answer using ONLY the provided web data. Give a concise, up-to-date answer. Do not say you lack real-time knowledge."
 """
 
 MODEL_NAME = "google/gemma-3-1b"
