@@ -1,67 +1,64 @@
 import json
 import re
+import httpx
 from memory_persistent import update_memory
+from config import MODEL_NAME
+
+LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 
 def clean_json(text):
-
-    # remove markdown code blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"```json", "", text)
     text = re.sub(r"```", "", text)
+    return text.strip()
 
-    # trim spaces
-    text = text.strip()
+def analyze_and_store_memory(user_text: str, assistant_text: str):
+    combined = f"User: {user_text}\nAssistant: {assistant_text}"
 
-    return text
-
-
-def analyze_and_store_memory(model, user_text):
-
-    prompt = {
+    payload = {
+        "model": MODEL_NAME,
         "messages": [
             {
                 "role": "system",
-                "content": """
-Extract ONLY important long-term memory.
+                "content": """Extract ONLY important long-term memory.
 
-If nothing important → return {}
+If nothing important return {}
 
-IMPORTANT means:
-- user is building something
-- making a decision
-- expressing preference
-- defining goals
+Create keys that make logical sense for the data. Examples:
+- "specs": {"gpu": "RTX 3080 Ti", "ram": "32GB"}
+- "projects": ["building a game called X"]
+- "preferences": ["casual tone", "concise answers"]
+- "goals": ["release game by June"]
 
-Ignore small talk.
-
-Return JSON:
-{
-  "projects": [],
-  "decisions": [],
-  "preferences": [],
-  "skills": []
-}
-"""
+Rules:
+- Be specific and accurate
+- Group related info logically
+- Never put hardware specs under "skills"
+- Return only valid JSON, no explanation"""
             },
             {
                 "role": "user",
-                "content": user_text
+                "content": combined
             }
-        ]
+        ],
+        "temperature": 0.2,
+        "stream": False
     }
 
-    response = model.respond(prompt)
-
-    raw = response.content
-    print("Memory raw response:", raw)
-
-    cleaned = clean_json(raw)
-
     try:
+        r = httpx.post(LM_STUDIO_URL, json=payload, timeout=30)
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"]
+        print("[Memory] Raw:", raw)
+
+        cleaned = clean_json(raw)
         data = json.loads(cleaned)
 
-        if data:
+        if data and any(data.values()):
             update_memory(data)
-            print("Stored memory:", data)
+            print("[Memory] Stored:", data)
 
+    except json.JSONDecodeError as e:
+        print(f"[Memory] Parse failed: {e}")
     except Exception as e:
-        print("Memory parse failed:", e)
+        print(f"[Memory] Error: {e}")
