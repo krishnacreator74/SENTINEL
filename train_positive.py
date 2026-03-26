@@ -6,7 +6,7 @@ import os, time
 os.makedirs("training_data/positive", exist_ok=True)
 
 print("Press Enter before each recording. Say 'sentee naal' clearly. Ctrl+C to stop.")
-count = 0
+count = int(input("Please enter the count that is allready done: "))
 while True:
     input(f"[{count}] Press Enter then speak...")
     audio = sd.rec(int(1.5 * 16000), samplerate=16000, channels=1, dtype='int16')

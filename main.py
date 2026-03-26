@@ -5,11 +5,10 @@ import voice
 from ears import listen
 from wake import wait_for_wake
 from widget import SentinelWidget
-from router import fast_route, needs_search
+from router import fast_route
 from memory_chat import ChatMemory
 from ai import (
     SentinelAI,
-    get_web_context,
     build_system_prompt,
     validate_messages,
     run_memory_async,
@@ -50,21 +49,17 @@ def run_sentinel():
 
         # Add user turn (guard against duplicate roles)
         if not chat_memory.messages or chat_memory.messages[-1]["role"] != "user":
-            chat_memory.add_user(req)
+            chat_memory.add_user(req + " /no_think")
 
-        # Optionally fetch live web context before the LLM speaks
-        web_context = ""
-        if needs_search(req):
-            voice.voice_of_ai("Searching...")
-            web_context = get_web_context(req)
-
-        # Build the full message list
+        # Build the full message list — no pre-search needed,
+        # the model will emit SEARCH: <query> itself if it needs live data
         messages = validate_messages(
-            [{"role": "system", "content": build_system_prompt(web_context)}]
+            [{"role": "system", "content": build_system_prompt()}]
             + chat_memory.get_messages()
         )
 
-        # Stream response — speak each sentence as it arrives
+        # Stream response — model self-triggers search when needed,
+        # speak each sentence as it arrives
         full_response = ai.respond_stream(
             messages,
             on_sentence=voice.voice_of_ai,

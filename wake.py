@@ -92,7 +92,7 @@ def wait_for_wake(silence_gate=None):
 
             confirm_times = [t for t in confirm_times if now - t < 2.0]
 
-            if len(confirm_times) >= 2:
+            if len(confirm_times) >= 1:
                 print("\nWake word detected!")
                 
                 # # save the triggering audio for inspection
