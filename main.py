@@ -10,9 +10,18 @@ from memory_chat import ChatMemory
 from ai import (
     SentinelAI,
     build_system_prompt,
-    validate_messages,
     run_memory_async,
 )
+
+def _dedup_roles(messages: list) -> list:
+    """Drop consecutive messages with the same role."""
+    fixed, last_role = [], None
+    for msg in messages:
+        if msg["role"] == last_role:
+            continue
+        fixed.append(msg)
+        last_role = msg["role"]
+    return fixed
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 def run_sentinel():
@@ -51,15 +60,13 @@ def run_sentinel():
         if not chat_memory.messages or chat_memory.messages[-1]["role"] != "user":
             chat_memory.add_user(req + " /no_think")
 
-        # Build the full message list — no pre-search needed,
-        # the model will emit SEARCH: <query> itself if it needs live data
-        messages = validate_messages(
+        # Build the full message list
+        messages = _dedup_roles(
             [{"role": "system", "content": build_system_prompt()}]
             + chat_memory.get_messages()
         )
 
-        # Stream response — model self-triggers search when needed,
-        # speak each sentence as it arrives
+        # Stream response
         full_response = ai.respond_stream(
             messages,
             on_sentence=voice.voice_of_ai,

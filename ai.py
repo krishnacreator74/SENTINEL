@@ -5,16 +5,25 @@ import httpx
 from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 from memory_persistent import load_memory
 from memory_analyzer import analyze_and_store_memory
-from tools import detect_tool
+from tools import detect_tool, run_tool
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 
 TOOL_INSTRUCTIONS = """
-You have tools available. Use them by writing on their own line:
-SEARCH: <specific query>
+You have access to a web search tool. Use it whenever the user asks you to search,
+look something up, or when you need current information you don't have.
 
-Only use SEARCH for: current news, live prices, scores, weather, recent releases.
-Never use SEARCH for: coding, general knowledge, math, history, personal info.
+To search, write this on its own line — nothing else, no other text:
+SEARCH: <your query>
+
+Use SEARCH for: current news, live prices, scores, weather, recent game releases,
+game settings, coding benchmarks, tech comparisons, or anything the user explicitly
+asks you to search for.
+
+IMPORTANT: If you decide to search, write ONLY the SEARCH line. Do not write any
+other text before or after it. The search results will come back and you will
+answer then.
+
 Query must have at least 2 specific words. Only search once per reply.
 """
 
@@ -26,7 +35,6 @@ def _strip_thinking(text: str) -> str:
     return text.strip()
 
 def _strip_tool_lines(text: str) -> str:
-    """Remove any SEARCH: lines from final spoken output."""
     return re.sub(r"(?m)^SEARCH:.*$", "", text, flags=re.IGNORECASE).strip()
 
 def clean_for_voice(text: str) -> str:
@@ -36,15 +44,6 @@ def clean_for_voice(text: str) -> str:
     text = text.replace("e.g.", "for example").replace("i.e.", "that is")
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
-
-def validate_messages(messages: list) -> list:
-    fixed, last_role = [], None
-    for msg in messages:
-        if msg["role"] == last_role:
-            continue
-        fixed.append(msg)
-        last_role = msg["role"]
-    return fixed
 
 def build_system_prompt() -> str:
     memory = load_memory()
@@ -77,8 +76,14 @@ def _payload(messages: list, stream: bool, max_tokens: int = 400) -> dict:
         "chat_template_kwargs": {"thinking": False},
     }
 
+_SEARCH_LINE_RE = re.compile(r"SEARCH:\s*.{3,}", re.IGNORECASE)
+
 def _stream_full(messages: list) -> str:
-    """Stream complete response — always drains fully to avoid LM Studio disconnect."""
+    """
+    Stream token by token. Cuts off early once a complete SEARCH: line is
+    detected — prevents Qwen from hallucinating an answer in the same turn
+    after emitting the SEARCH: trigger.
+    """
     full = ""
     try:
         with httpx.stream(
@@ -100,22 +105,27 @@ def _stream_full(messages: list) -> str:
                     continue
                 full += token
                 print(token, end="", flush=True)
+                # Cut stream the moment a complete SEARCH: line has arrived
+                if "\n" in full and _SEARCH_LINE_RE.search(full):
+                    print("\n[AI] SEARCH line complete — cutting stream.")
+                    break
     except Exception as e:
         print(f"\n[AI] Stream error: {e}")
     print()
     return full
 
-def _call_sync(messages: list, max_tokens: int = 350) -> str:
-    """Blocking call — used when we need a clean answer after tool injection."""
+def _call_sync(messages: list, max_tokens: int = 400) -> str:
     try:
-        print(f"[AI] Sync call...")
+        print(f"[AI] Sync call ({len(messages)} messages)...")
         r = httpx.post(
             LM_STUDIO_URL,
             json=_payload(messages, stream=False, max_tokens=max_tokens),
             timeout=90
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"] or ""
+        content = r.json()["choices"][0]["message"]["content"] or ""
+        print(f"[AI] Sync got {len(content)} chars")
+        return content
     except Exception as e:
         print(f"[AI] Sync error: {e}")
         return ""
@@ -138,7 +148,7 @@ class SentinelAI:
     def respond_stream(self, messages: list, on_sentence=None) -> str:
         print(f"[AI] Responding...")
 
-        # ── Step 1: get full first response ───────────────────────────────────
+        # ── Step 1: stream first response ─────────────────────────────────────
         raw = _stream_full(messages)
         clean = _strip_thinking(raw)
         print(f"[AI] Clean response: {len(clean)} chars")
@@ -149,60 +159,71 @@ class SentinelAI:
                 on_sentence(msg)
             return msg
 
-        # ── Step 2: check if model wants to use a tool ────────────────────────
+        # ── Step 2: check for tool trigger ────────────────────────────────────
         tool, arg = detect_tool(clean)
 
         if tool is None:
-            # No tool — just speak the response
             self._speak(clean, on_sentence)
             return clean_for_voice(clean)
 
         # ── Step 3: run the tool ──────────────────────────────────────────────
         print(f"[AI] Tool '{tool.name}' triggered with: '{arg}'")
-        if on_sentence:
-            on_sentence("Let me look that up.")
 
-        tool_result = tool.run(arg)
-
-        # What the model said before the tool call line
+        # Only speak what came BEFORE the SEARCH: line — discard everything
+        # after it (Qwen often hallucinates an answer right after the SEARCH
+        # line in the same response; we never want that spoken or used).
         pre = re.split(r"SEARCH:", clean, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        pre = clean_for_voice(pre)
         if pre:
+            print(f"[AI] Pre-search text: {pre[:80]}...")
             self._speak(pre, on_sentence)
 
-        # ── Step 4: inject result and force a grounded answer ─────────────────
-        new_messages = list(messages)
-        if pre:
-            new_messages.append({"role": "assistant", "content": pre})
+        if on_sentence:
+            on_sentence("Let me search that for you.")
 
-        # This prompt structure makes it very hard for the model to ignore results:
-        # - Results come FIRST as a system-style block
-        # - Instruction is a direct command, not a suggestion
-        # - Explicitly forbids asking follow-up questions or saying "I need more info"
+        # Get original user question
+        original_question = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                original_question = msg["content"]
+                break
+
+        tool_result = run_tool(tool, arg, original_question=original_question)
+        print(f"[AI] Tool result: {len(tool_result)} chars")
+
+        # ── Step 4: build clean messages for grounded answer ──────────────────
+        # Discard the model's entire first response — it may contain
+        # hallucinated settings written after the SEARCH: line.
+        # Inject results as a fresh user turn so the model answers only
+        # from real search data.
+
+        new_messages = list(messages)  # already ends with the user question
+        new_messages.append({
+            "role": "assistant",
+            "content": "Let me search that for you."
+        })
         new_messages.append({
             "role": "user",
             "content": (
-                "=== SEARCH RESULTS START ===\n"
+                "=== SEARCH RESULTS ===\n"
                 + tool_result
-                + "\n=== SEARCH RESULTS END ===\n\n"
-                "The results above are from a live web search. "
-                "Read them and give me a summary right now. "
-                "3 to 5 sentences. Plain text only. No bullet points. "
-                "Do not say you need more info. Do not ask follow-up questions. "
-                "Just summarize what the search results say."
+                + "\n=== END RESULTS ===\n\n"
+                "Based only on the search results above, answer my original question. "
+                "Plain text. 3 to 5 sentences. No bullet points. No markdown. "
+                "Do not say you need more info. Do not ask follow-up questions."
             )
         })
-        new_messages = validate_messages(new_messages)
 
-        # ── Step 5: get the grounded answer ───────────────────────────────────
-        raw_answer = _call_sync(new_messages, max_tokens=350)
+        # ── Step 5: get grounded answer ───────────────────────────────────────
+        raw_answer = _call_sync(new_messages, max_tokens=400)
         final = clean_for_voice(_strip_thinking(raw_answer))
 
         if not final:
-            final = "I found results but had trouble summarizing them."
+            final = "I found some results but had trouble summarizing them. Try asking again."
 
         self._speak(final, on_sentence)
         print(f"[AI] Final answer: {final}")
-        return (pre + " " + final).strip()
+        return final
 
     def _speak(self, text: str, on_sentence):
         if not on_sentence:
