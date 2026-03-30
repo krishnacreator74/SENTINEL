@@ -114,22 +114,6 @@ def _stream_full(messages: list) -> str:
     print()
     return full
 
-def _call_sync(messages: list, max_tokens: int = 400) -> str:
-    try:
-        print(f"[AI] Sync call ({len(messages)} messages)...")
-        r = httpx.post(
-            LM_STUDIO_URL,
-            json=_payload(messages, stream=False, max_tokens=max_tokens),
-            timeout=90
-        )
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"] or ""
-        print(f"[AI] Sync got {len(content)} chars")
-        return content
-    except Exception as e:
-        print(f"[AI] Sync error: {e}")
-        return ""
-
 # ── Core AI class ─────────────────────────────────────────────────────────────
 class SentinelAI:
     def __init__(self):
@@ -163,61 +147,37 @@ class SentinelAI:
         tool, arg = detect_tool(clean)
 
         if tool is None:
+            # No tool — speak response as-is
             self._speak(clean, on_sentence)
             return clean_for_voice(clean)
 
         # ── Step 3: run the tool ──────────────────────────────────────────────
         print(f"[AI] Tool '{tool.name}' triggered with: '{arg}'")
 
-        # Only speak what came BEFORE the SEARCH: line — discard everything
-        # after it (Qwen often hallucinates an answer right after the SEARCH
-        # line in the same response; we never want that spoken or used).
+        # Speak anything that came before SEARCH: (usually empty, but just in case)
         pre = re.split(r"SEARCH:", clean, maxsplit=1, flags=re.IGNORECASE)[0].strip()
         pre = clean_for_voice(pre)
         if pre:
-            print(f"[AI] Pre-search text: {pre[:80]}...")
             self._speak(pre, on_sentence)
 
         if on_sentence:
             on_sentence("Let me search that for you.")
 
-        # Get original user question
+        # Get original user question from message history
         original_question = ""
         for msg in reversed(messages):
             if msg["role"] == "user":
                 original_question = msg["content"]
                 break
 
+        # ── Step 4: run tool — tools.py handles search + synthesis internally ─
+        # tools.py._synthesise() already calls the LLM with the search results
+        # and returns a grounded answer. We speak it directly — no second LLM
+        # call here, which was causing "I cannot browse the internet" responses.
         tool_result = run_tool(tool, arg, original_question=original_question)
         print(f"[AI] Tool result: {len(tool_result)} chars")
 
-        # ── Step 4: build clean messages for grounded answer ──────────────────
-        # Discard the model's entire first response — it may contain
-        # hallucinated settings written after the SEARCH: line.
-        # Inject results as a fresh user turn so the model answers only
-        # from real search data.
-
-        new_messages = list(messages)  # already ends with the user question
-        new_messages.append({
-            "role": "assistant",
-            "content": "Let me search that for you."
-        })
-        new_messages.append({
-            "role": "user",
-            "content": (
-                "=== SEARCH RESULTS ===\n"
-                + tool_result
-                + "\n=== END RESULTS ===\n\n"
-                "Based only on the search results above, answer my original question. "
-                "Plain text. 3 to 5 sentences. No bullet points. No markdown. "
-                "Do not say you need more info. Do not ask follow-up questions."
-            )
-        })
-
-        # ── Step 5: get grounded answer ───────────────────────────────────────
-        raw_answer = _call_sync(new_messages, max_tokens=400)
-        final = clean_for_voice(_strip_thinking(raw_answer))
-
+        final = clean_for_voice(_strip_thinking(tool_result))
         if not final:
             final = "I found some results but had trouble summarizing them. Try asking again."
 
