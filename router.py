@@ -56,6 +56,16 @@ def _clean(text: str) -> str:
     return text
 
 # ── App / system command routing (no LLM) ────────────────────────────────────
+def _add_close_hud_command(req: str, hud) -> bool:
+    """Returns True if command was handled."""
+    triggers = ["close window", "close hud", "close panel",
+                "hide window", "hide display", "close display"]
+    if any(t in req for t in triggers):
+        if hud:
+            hud.close()
+        return True
+    return False
+
 def fast_route(text: str) -> bool:
     """
     Handle app launches and system commands instantly with pure logic.
