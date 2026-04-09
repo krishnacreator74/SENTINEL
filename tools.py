@@ -176,7 +176,7 @@ Reply with exactly one of:
         )
         ctx_line = f"\nUser context: {user_context}" if user_context else ""
         return _llm([
-            {"role": "system", "content": "You are Sentinel, a helpful AI assistant. Answer clearly and directly."},
+            {"role": "system", "content": "You are Sentinel. Plain text only. No markdown, no bullet points, no asterisks. Concise spoken style. 3-5 sentences max."},
             {"role": "user",   "content": f'Answer: "{original_question}"{ctx_line}\n\nResults:\n{results_block}\n\nBe specific. No filler.'},
         ])
 

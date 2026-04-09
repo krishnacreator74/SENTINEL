@@ -247,6 +247,11 @@ class ThinDivider(QWidget):
 # ── Main HUD window ────────────────────────────────────────────────────────────
 class SentinelHUD(QWidget):
 
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and e.position().y() < HEADER_H:
+            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        # Also allow resize from bottom-right corner outside the grip widget
+
     def __init__(self):
         super().__init__()
         self.signals           = HUDSignals()
@@ -257,6 +262,7 @@ class SentinelHUD(QWidget):
         self._setup_window()
         self._build_ui()
         self._connect_signals()
+        self._auto_close_timer = None
 
     def _setup_window(self):
         self.setWindowFlags(
@@ -266,6 +272,7 @@ class SentinelHUD(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_Resized)
         screen = QApplication.primaryScreen().geometry()
         x = screen.width()  - DEFAULT_W - 36
         y = screen.height() - DEFAULT_H - 72
@@ -376,8 +383,12 @@ class SentinelHUD(QWidget):
     # ── Slots ─────────────────────────────────────────────────────────────────
     @pyqtSlot(list)
     def _on_load_sentences(self, sentences: list):
+        # Cancel any pending auto-close from previous response
+        if self._auto_close_timer is not None:
+            self._auto_close_timer.stop()
+            self._auto_close_timer = None
         self._clear_content()
-        self._user_scrolled_up = False   # reset on every new response
+        self._user_scrolled_up = False
         for text in sentences:
             block = SentenceBlock(text)
             self._blocks.append(block)
@@ -402,6 +413,10 @@ class SentinelHUD(QWidget):
     def _on_finish_all(self):
         for b in self._blocks:
             b.set_state(STATE_PAST)
+        self._auto_close_timer = QTimer()
+        self._auto_close_timer.setSingleShot(True)
+        self._auto_close_timer.timeout.connect(self.hide_hud)
+        self._auto_close_timer.start(10000)
 
     @pyqtSlot(str)
     def _on_image(self, src: str):
@@ -466,7 +481,10 @@ class SentinelHUD(QWidget):
         a.setDuration(200)
         a.setStartValue(self.windowOpacity()); a.setEndValue(0.0)
         a.setEasingCurve(QEasingCurve.Type.InCubic)
-        a.finished.connect(self.hide); a.start(); self._anim = a
+        # Clear content AFTER hide animation finishes
+        a.finished.connect(self.hide)
+        a.finished.connect(self._clear_content)  # ← add this line
+        a.start(); self._anim = a
 
     def resizeEvent(self, e):
         super().resizeEvent(e); self.glass.setGeometry(self.rect())

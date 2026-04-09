@@ -67,6 +67,11 @@ def analyze_and_store_memory(user_text: str, assistant_text: str):
         raw = r.json()["choices"][0]["message"]["content"]
         print("[Memory] Raw:", raw)
 
+        # After getting raw response, skip if it looks like a refusal
+        if any(phrase in raw.lower() for phrase in ["unable to", "cannot", "can't", "i don't"]):
+            print("[Memory] Skipping — looks like a refusal, not memory data.")
+            return
+
         cleaned = _clean_json(raw)
         data = json.loads(cleaned)
 
@@ -84,6 +89,7 @@ def analyze_and_store_memory(user_text: str, assistant_text: str):
             print("[Memory] Stored:", filtered)
         else:
             print("[Memory] Nothing worth storing.")
+
 
     except json.JSONDecodeError as e:
         print(f"[Memory] Parse failed: {e}")

@@ -194,12 +194,15 @@ class SentinelAI:
 
         # ── Step 3: follow-up call with tool results ───────────────────────────
         tool_context = self._build_tool_context(tools_requested, tool_results)
-        followup_messages = messages + [
-            {"role": "assistant", "content": json.dumps(result)},
-            {"role": "user",      "content": tool_context},
+        # CORRECT — flatten system prompt separately, keep full history
+        followup_messages = [messages[0]] + [  # system prompt
+            {"role": "user",      "content": messages[-1]["content"]},  # original question
+            {"role": "assistant", "content": json.dumps(result)},       # first model turn
+            {"role": "user",      "content": tool_context},             # tool results
         ]
-
+        print(f"[AI] Follow-up call with {len(followup_messages)} messages")
         print("[AI] Calling model with tool results...")
+
         final_result = _call_lm(followup_messages, max_tokens=600)
 
         if not final_result:
@@ -208,8 +211,8 @@ class SentinelAI:
                 on_sentence(fallback)
             return fallback
 
-        final_text  = final_result.get("response", "")
-        final_hud   = final_result.get("hud", True)
+        final_text = final_result.get("response", "")
+        final_hud  = True if len(final_text) > 80 else final_result.get("hud", False)
 
         # Inject images to HUD from any search results
         all_images = []
@@ -265,13 +268,12 @@ class SentinelAI:
         return results
 
     def _build_tool_context(self, tools_requested: list, tool_results: list) -> str:
-        """Formats tool results as a user message for the follow-up call."""
-        parts = ["Tool results:"]
+        parts = ["Here are the tool results. Now give your FINAL response to the user."]
+        parts.append("Do NOT call any tools again. Set tools to [] and awaiting_tool_result to false.")
         for tool_def, result in zip(tools_requested, tool_results):
             name = tool_def.get("name", "unknown")
             text = result.text if result else "No result."
-            parts.append(f"\n[{name.upper()}]\n{text}")
-        parts.append("\nNow respond to the user based on these results.")
+            parts.append(f"\n[{name.upper()} RESULT]\n{text}")
         return "\n".join(parts)
 
     def close(self):
