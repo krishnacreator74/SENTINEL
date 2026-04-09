@@ -1,140 +1,38 @@
-import re
+"""
+ai.py — Sentinel core, redesigned for structured JSON output.
+
+Flow:
+  1. Send messages to LM Studio (JSON mode enforced via schema)
+  2. Parse the structured response — no regex fragility
+  3. Execute tools in parallel if multiple requested
+  4. Feed tool results back for final response
+  5. Stream sentences to HUD + voice
+"""
+
 import json
 import time
 import threading
 import httpx
+
 from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 from memory_persistent import load_memory
 from memory_analyzer import analyze_and_store_memory
-from tools import detect_tool, run_tool
+from tools import run_tool_by_name, ToolResult
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 
-TOOL_INSTRUCTIONS = """
-You have access to a web search tool. Use it whenever the user asks you to search,
-look something up, or when you need current information you don't have.
 
-To search, write this on its own line — nothing else, no other text:
-SEARCH: <your query>
-
-Use SEARCH for: current news, live prices, scores, weather, recent game releases,
-game settings, coding benchmarks, tech comparisons, or anything the user explicitly
-asks you to search for.
-
-IMPORTANT: If you decide to search, write ONLY the SEARCH line. Do not write any
-other text before or after it. The search results will come back and you will
-answer then.
-
-Query must have at least 2 specific words. Only search once per reply.
-
-DISPLAY WINDOW:
-You have a HUD popup window available. When your response contains:
-  - News / current events
-  - Search results
-  - Lists, comparisons, or structured info
-  - Weather details
-  - Anything the user would benefit from reading (not just hearing)
-
-Start your response with [HUD] on its own line.
-The window will appear automatically.
-If your response is conversational or a simple one-liner, do NOT use [HUD].
-
-Example:
-[HUD]
-Here are today's top headlines...
-
-Do NOT use [HUD] for: greetings, confirmations, short answers, errors.
-"""
-
-# ── Text helpers ───────────────────────────────────────────────────────────────
-def _strip_thinking(text: str) -> str:
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<think>.*",          "", text, flags=re.DOTALL)
-    text = re.sub(r"Thinking Process:.*?(?=\n[A-Z]|\Z)", "", text, flags=re.DOTALL)
-    return text.strip()
-
-def _strip_tool_lines(text: str) -> str:
-    return re.sub(r"(?m)^SEARCH:.*$", "", text, flags=re.IGNORECASE).strip()
-
-def clean_for_voice(text: str) -> str:
-    text = _strip_thinking(text)
-    text = _strip_tool_lines(text)
-    text = re.sub(r"(?m)^\[HUD(?:\s+\w+=\w+)?\]\s*$", "", text)
-    text = re.sub(r"\*\*|\*", "", text)
-    text = re.sub(r"`[^`]*`", lambda m: m.group(0).strip("`"), text)
-    text = text.replace("e.g.", "for example").replace("i.e.", "that is")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
-
-def _has_hud_tag(raw: str) -> bool:
-    return bool(re.search(r"(?m)^\[HUD", _strip_thinking(raw), re.IGNORECASE))
-
-def _split_sentences(text: str) -> list[str]:
-    """
-    Split cleaned voice text into display blocks for the HUD.
-
-    Rules:
-    - Numbered list items (e.g. "1. Phone news: ...") are kept as single blocks
-      — we never split on a period that follows a digit at line/sentence start.
-    - Normal prose is split on sentence-ending punctuation (.!?) followed by space.
-    - Empty strings are dropped.
-    """
-    lines   = text.splitlines()
-    blocks  = []
-    current = ""
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            if current:
-                blocks.append(current.strip())
-                current = ""
-            continue
-
-        # Numbered list item — e.g. "1." "2." "10." at start of line
-        if re.match(r"^\d+\.\s", line):
-            if current:
-                blocks.append(current.strip())
-                current = ""
-            blocks.append(line)
-            continue
-
-        # Heading-like short line ending with colon — keep as its own block
-        if line.endswith(":") and len(line) < 80:
-            if current:
-                blocks.append(current.strip())
-                current = ""
-            blocks.append(line)
-            continue
-
-        # Normal prose: accumulate and split on sentence boundaries
-        current += (" " if current else "") + line
-
-    if current:
-        blocks.append(current.strip())
-
-    # Now split any accumulated prose blocks on sentence boundaries
-    result = []
-    for block in blocks:
-        # Don't re-split numbered items or short headings
-        if re.match(r"^\d+\.", block) or (block.endswith(":") and len(block) < 80):
-            result.append(block)
-            continue
-        # Split on . ! ? followed by whitespace — but NOT on digits ("3.5", "1.")
-        parts = re.split(r"(?<=[^0-9\s][.!?])\s+(?=[A-Z])", block)
-        result.extend(p.strip() for p in parts if p.strip())
-
-    return result
-
+# ── Prompt builder ─────────────────────────────────────────────────────────────
 def build_system_prompt() -> str:
     memory = load_memory()
     return (
         SYSTEM_PROMPT
-        + TOOL_INSTRUCTIONS
-        + "\nKnown user info:\n"
+        + "\n\nKnown user info:\n"
         + json.dumps(memory, indent=2)
     )
 
+
+# ── Memory helper ──────────────────────────────────────────────────────────────
 def run_memory_async(user_text: str, assistant_text: str):
     def task():
         try:
@@ -143,51 +41,101 @@ def run_memory_async(user_text: str, assistant_text: str):
             print(f"[Memory] Error: {e}")
     threading.Thread(target=task, daemon=True).start()
 
-# ── API helpers ────────────────────────────────────────────────────────────────
-def _payload(messages: list, stream: bool, max_tokens: int = 400) -> dict:
-    return {
-        "model":                MODEL_NAME,
-        "messages":             messages,
-        "temperature":          TEMPERATURE,
-        "top_p":                TOP_P,
-        "top_k":                TOP_K,
-        "stream":               stream,
-        "max_tokens":           max_tokens,
-        "enable_thinking":      False,
-        "chat_template_kwargs": {"thinking": False},
+
+# ── LM Studio call (non-streaming, JSON mode) ──────────────────────────────────
+def _call_lm(messages: list, max_tokens: int = 500) -> dict:
+    """
+    Calls LM Studio with structured output enforced.
+    Returns parsed dict from model JSON, or empty dict on failure.
+    LM Studio enforces the schema you pasted in its UI — we just parse.
+    """
+    payload = {
+        "model":       MODEL_NAME,
+        "messages":    messages,
+        "temperature": TEMPERATURE,
+        "top_p":       TOP_P,
+        "top_k":       TOP_K,
+        "stream":      False,
+        "max_tokens":  max_tokens,
+        # NOTE: Do NOT add response_format here — LM Studio doesn't support it
+        # and returns 400. Structured output is enforced via the LM Studio UI schema.
     }
-
-_SEARCH_LINE_RE = re.compile(r"SEARCH:\s*.{3,}", re.IGNORECASE)
-
-def _stream_full(messages: list) -> str:
-    full = ""
     try:
-        with httpx.stream(
-            "POST", LM_STUDIO_URL,
-            json=_payload(messages, stream=True),
+        r = httpx.post(
+            LM_STUDIO_URL,
+            json=payload,
             headers={"Content-Type": "application/json"},
             timeout=90,
-        ) as resp:
-            resp.raise_for_status()
-            for raw in resp.iter_lines():
-                if not raw or not raw.startswith("data:"):
-                    continue
-                chunk = raw[5:].strip()
-                if chunk == "[DONE]":
-                    break
-                try:
-                    token = json.loads(chunk)["choices"][0]["delta"].get("content", "") or ""
-                except (json.JSONDecodeError, KeyError):
-                    continue
-                full += token
-                print(token, end="", flush=True)
-                if "\n" in full and _SEARCH_LINE_RE.search(full):
-                    print("\n[AI] SEARCH line complete — cutting stream.")
-                    break
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"]
+        print(f"[AI] Raw JSON: {raw[:300]}")
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"[AI] JSON parse error: {e}")
+        return {}
     except Exception as e:
-        print(f"\n[AI] Stream error: {e}")
-    print()
-    return full
+        print(f"[AI] Call error: {e}")
+        return {}
+
+
+# ── Sentence splitter (unchanged — still needed for HUD/voice) ────────────────
+import re
+
+def _split_sentences(text: str) -> list[str]:
+    lines   = text.splitlines()
+    blocks  = []
+    current = ""
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current:
+                blocks.append(current.strip())
+                current = ""
+            continue
+        if re.match(r"^\d+\.\s", line):
+            if current:
+                blocks.append(current.strip())
+                current = ""
+            blocks.append(line)
+            continue
+        if line.endswith(":") and len(line) < 80:
+            if current:
+                blocks.append(current.strip())
+                current = ""
+            blocks.append(line)
+            continue
+        current += (" " if current else "") + line
+    if current:
+        blocks.append(current.strip())
+    result = []
+    for block in blocks:
+        if re.match(r"^\d+\.", block) or (block.endswith(":") and len(block) < 80):
+            result.append(block)
+            continue
+        parts = re.split(r"(?<=[^0-9\s][.!?])\s+(?=[A-Z])", block)
+        result.extend(p.strip() for p in parts if p.strip())
+    return result
+
+
+# ── HUD + voice delivery ───────────────────────────────────────────────────────
+def _speak(text: str, on_sentence, hud=None, use_hud: bool = False, title: str = "SENTINEL"):
+    import voice as _voice
+    if not on_sentence:
+        if hud and use_hud:
+            hud.finish_all()
+        return
+    sentences = _split_sentences(text)
+    if not sentences:
+        return
+    if hud and use_hud:
+        hud.load_sentences(sentences, title=title)
+        time.sleep(0.08)
+    for idx, sentence in enumerate(sentences):
+        _voice.set_sentence_idx(idx if (hud and use_hud) else -1)
+        on_sentence(sentence)
+    if hud and use_hud:
+        hud.finish_all()
 
 
 # ── Core AI class ──────────────────────────────────────────────────────────────
@@ -205,99 +153,126 @@ class SentinelAI:
         except Exception as e:
             raise RuntimeError(f"[AI] Cannot reach LM Studio: {e}")
 
-    def respond_stream(self, messages: list, on_sentence=None, hud=None) -> str:
-        print("[AI] Responding...")
+    def respond(self, messages: list, on_sentence=None, hud=None) -> str:
+        """
+        Main entry point. Replaces respond_stream.
 
-        raw   = _stream_full(messages)
-        clean = _strip_thinking(raw)
-        print(f"[AI] Clean response: {len(clean)} chars")
+        1. Ask model → get structured JSON
+        2. If tools requested → run them (parallel if multiple)
+        3. If awaiting_tool_result → call model again with results
+        4. Speak + HUD the final response
+        """
+        print("[AI] Calling model...")
+        result = _call_lm(messages)
 
-        if not clean:
+        if not result:
             msg = "I had trouble generating a response. Please try again."
-            if on_sentence: on_sentence(msg)
+            if on_sentence:
+                on_sentence(msg)
             return msg
 
-        tool, arg = detect_tool(clean)
+        # ── Step 1: announce if we're about to tool ────────────────────────────
+        tools_requested = result.get("tools", [])
+        response_text   = result.get("response", "")
+        use_hud         = result.get("hud", False)
+        awaiting        = result.get("awaiting_tool_result", False)
 
-        # ── Branch A: no tool ─────────────────────────────────────────────────
-        if tool is None:
-            should_hud = _has_hud_tag(raw)
-            self._speak(clean, on_sentence, hud, use_hud=should_hud)
-            return clean_for_voice(clean)
+        print(f"[AI] thought: {result.get('thought', '')}")
+        print(f"[AI] tools: {tools_requested}")
+        print(f"[AI] response: {response_text[:100]}")
+        print(f"[AI] hud: {use_hud} | awaiting: {awaiting}")
 
-        # ── Branch B: tool ────────────────────────────────────────────────────
-        print(f"[AI] Tool '{tool.name}' triggered with: '{arg}'")
+        # Speak the pre-tool response (e.g. "Let me search that for you")
+        if response_text:
+            _speak(response_text, on_sentence, hud, use_hud=use_hud and not awaiting)
 
-        pre = re.split(r"SEARCH:", clean, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-        if pre:
-            self._speak(clean_for_voice(pre), on_sentence, hud=None, use_hud=False)
+        # ── Step 2: run tools ──────────────────────────────────────────────────
+        if not tools_requested or not awaiting:
+            return response_text
 
-        if on_sentence:
-            on_sentence("Let me search that for you.")
+        tool_results = self._run_tools_parallel(tools_requested, messages)
 
+        # ── Step 3: follow-up call with tool results ───────────────────────────
+        tool_context = self._build_tool_context(tools_requested, tool_results)
+        followup_messages = messages + [
+            {"role": "assistant", "content": json.dumps(result)},
+            {"role": "user",      "content": tool_context},
+        ]
+
+        print("[AI] Calling model with tool results...")
+        final_result = _call_lm(followup_messages, max_tokens=600)
+
+        if not final_result:
+            fallback = "I got the results but had trouble summarizing. Please try again."
+            if on_sentence:
+                on_sentence(fallback)
+            return fallback
+
+        final_text  = final_result.get("response", "")
+        final_hud   = final_result.get("hud", True)
+
+        # Inject images to HUD from any search results
+        all_images = []
+        for tr in tool_results:
+            if hasattr(tr, "images"):
+                all_images.extend(tr.images)
+
+        _speak(final_text, on_sentence, hud, use_hud=final_hud, title="SENTINEL")
+
+        if hud and all_images:
+            def _imgs():
+                time.sleep(0.5)
+                for url in all_images[:3]:
+                    hud.append_image(url)
+            threading.Thread(target=_imgs, daemon=True).start()
+
+        return final_text
+
+    def _run_tools_parallel(self, tools_requested: list, messages: list) -> list:
+        """
+        Runs all requested tools in parallel threads.
+        Returns list of ToolResult in same order.
+        """
+        results = [None] * len(tools_requested)
+
+        # Pull original user question for search context
         original_question = ""
         for msg in reversed(messages):
             if msg["role"] == "user":
                 original_question = msg["content"]
                 break
 
-        result = run_tool(tool, arg, original_question=original_question)
-        print(f"[AI] Tool result: {len(result.text)} chars, {len(result.images)} images")
+        def _run(idx, tool_def):
+            name  = tool_def.get("name", "")
+            input_ = tool_def.get("input", "")
+            print(f"[AI] Running tool '{name}' with input: '{input_}'")
+            try:
+                results[idx] = run_tool_by_name(
+                    name, input_,
+                    original_question=original_question
+                )
+            except Exception as e:
+                print(f"[AI] Tool '{name}' error: {e}")
+                results[idx] = ToolResult(text=f"Tool '{name}' failed: {e}", images=[])
 
-        final = clean_for_voice(_strip_thinking(result.text))
-        if not final:
-            final = "I found some results but had trouble summarizing them. Try again."
+        threads = [
+            threading.Thread(target=_run, args=(i, t), daemon=True)
+            for i, t in enumerate(tools_requested)
+        ]
+        for t in threads: t.start()
+        for t in threads: t.join(timeout=60)
 
-        self._speak(final, on_sentence, hud, use_hud=True, title="SEARCH RESULTS")
+        return results
 
-        if hud is not None and result.images:
-            def _imgs():
-                time.sleep(0.5)
-                for url in result.images:
-                    hud.append_image(url)
-            threading.Thread(target=_imgs, daemon=True).start()
-
-        print(f"[AI] Final answer: {final}")
-        return final
-
-    def _speak(
-        self,
-        text: str,
-        on_sentence,
-        hud=None,
-        use_hud: bool = False,
-        title: str = "SENTINEL",
-    ):
-        """
-        Split text into sentences, load them into the HUD (if use_hud),
-        then speak each one — HUD highlights the active sentence in real time.
-        """
-        import voice as _voice
-
-        if not on_sentence:
-            if hud and use_hud:
-                hud.finish_all()
-            return
-
-        voice_text = clean_for_voice(text)
-        sentences  = _split_sentences(voice_text)
-
-        if not sentences:
-            return
-
-        # Load all sentences into HUD upfront so the user sees the full response
-        if hud and use_hud:
-            hud.load_sentences(sentences, title=title)
-            time.sleep(0.08)   # let Qt paint before first sentence starts
-
-        for idx, sentence in enumerate(sentences):
-            # Tell voice.py which sentence index is about to play
-            _voice.set_sentence_idx(idx if (hud and use_hud) else -1)
-            on_sentence(sentence)   # blocks until Piper finishes
-
-        # Safety: make sure all blocks are white after speaking
-        if hud and use_hud:
-            hud.finish_all()
+    def _build_tool_context(self, tools_requested: list, tool_results: list) -> str:
+        """Formats tool results as a user message for the follow-up call."""
+        parts = ["Tool results:"]
+        for tool_def, result in zip(tools_requested, tool_results):
+            name = tool_def.get("name", "unknown")
+            text = result.text if result else "No result."
+            parts.append(f"\n[{name.upper()}]\n{text}")
+        parts.append("\nNow respond to the user based on these results.")
+        return "\n".join(parts)
 
     def close(self):
         pass

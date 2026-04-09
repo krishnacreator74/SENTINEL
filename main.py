@@ -15,7 +15,6 @@ from ai import (
 )
 
 def _dedup_roles(messages: list) -> list:
-    """Drop consecutive messages with the same role."""
     fixed, last_role = [], None
     for msg in messages:
         if msg["role"] == last_role:
@@ -24,7 +23,6 @@ def _dedup_roles(messages: list) -> list:
         last_role = msg["role"]
     return fixed
 
-# ── Sentinel main loop ────────────────────────────────────────────────────────
 def run_sentinel(hud=None):
     ai          = SentinelAI()
     chat_memory = ChatMemory()
@@ -52,23 +50,22 @@ def run_sentinel(hud=None):
 
         print("You:", req)
 
-        # Voice close command — handled before anything else
         if _add_close_hud_command(req, hud):
             continue
 
-        # Fast local commands (open apps, etc.)
         if fast_route(req):
             continue
 
         if not chat_memory.messages or chat_memory.messages[-1]["role"] != "user":
-            chat_memory.add_user(req + " /no_think")
+            chat_memory.add_user(req)
 
         messages = _dedup_roles(
             [{"role": "system", "content": build_system_prompt()}]
             + chat_memory.get_messages()
         )
 
-        full_response = ai.respond_stream(
+        # ── Changed: respond() instead of respond_stream() ────────────────────
+        full_response = ai.respond(
             messages,
             on_sentence=voice.voice_of_ai,
             hud=hud,
@@ -85,9 +82,7 @@ def run_sentinel(hud=None):
 
     ai.close()
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Qt must have its own thread — tkinter owns the main thread
     qt_ready = threading.Event()
     hud_ref  = [None]
 
@@ -96,12 +91,12 @@ if __name__ == "__main__":
         from hud import HUD
         qt_app     = QApplication(sys.argv)
         hud_ref[0] = HUD(qt_app)
-        qt_ready.set()          # unblock main thread
-        qt_app.exec()           # Qt event loop — runs until HUD is closed
+        qt_ready.set()
+        qt_app.exec()
 
     qt_t = threading.Thread(target=_qt_thread, daemon=True)
     qt_t.start()
-    qt_ready.wait()             # wait until HUD is actually ready
+    qt_ready.wait()
 
     hud          = hud_ref[0]
     widget       = SentinelWidget()
@@ -111,4 +106,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_sentinel, args=(hud,), daemon=True).start()
 
     print("Starting Sentinel...")
-    widget.run()                # tkinter mainloop — blocks main thread (correct)
+    widget.run()
