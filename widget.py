@@ -1,209 +1,244 @@
-import tkinter as tk
-import win32gui
-import win32con
-import ctypes
+"""
+widget.py — Sentinel ambient circle widget
+
+A small, always-on-top transparent circle that lives at the bottom-center
+of the screen. Renders using PyQt6's painter for real compositing and glow.
+
+States:
+  idle      — dim, very slow breath pulse, almost invisible
+  listening — brighter blue, medium pulse
+  speaking  — reacts to audio energy, inner glow expands
+
+Click:
+  Single click within circle area → toggle chat window
+  CLICK_COOLDOWN prevents accidental double-triggers (gaming safety)
+
+Game mode:
+  set_game_mode(True)  → widget hides entirely
+  set_game_mode(False) → widget restores
+"""
+
 import math
 import time
 
-# ── Win32 ────────────────────────────────────────────────────────────────────
-user32       = ctypes.windll.user32
-LWA_COLORKEY = 0x00000001
-CHROMA_HEX   = "#020202"
-CHROMA_REF   = 0x00020202
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import Qt, QTimer, QPointF, pyqtSignal
+from PyQt6.QtGui import (
+    QPainter, QColor, QRadialGradient,
+    QPen, QBrush,
+)
+
+# ── Geometry ──────────────────────────────────────────────────────────────────
+W       = 80
+H       = 80
+CX      = W / 2
+CY      = H / 2
+R_CORE  = 14    # ring radius
+R_INNER = 10    # inner fill glow radius
+R_GLOW  = 30    # outer halo max radius
+
+# ── Colours (r, g, b) ─────────────────────────────────────────────────────────
+COL_BLUE = (82,  183, 255)
+COL_CYAN = (120, 220, 255)
+COL_PINK = (200, 120, 255)
+
+# ── Timing ────────────────────────────────────────────────────────────────────
+FRAME_MS       = 16     # ~60 fps
+CLICK_COOLDOWN = 0.8    # seconds — min time between accepted clicks
 
 
-def _apply_colorkey(hwnd):
-    ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-    win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE,
-                           ex | win32con.WS_EX_LAYERED
-                              | win32con.WS_EX_TOOLWINDOW
-                              | win32con.WS_EX_NOACTIVATE)
-    user32.SetLayeredWindowAttributes(hwnd, CHROMA_REF, 0, LWA_COLORKEY)
+class SentinelWidget(QWidget):
 
-
-def _find_workerw():
-    progman = win32gui.FindWindow("Progman", None)
-    user32.SendMessageTimeoutW(progman, 0x052C, 0, 0,
-                               win32con.SMTO_NORMAL, 1000, None)
-    result = [None]
-
-    def _cb(hwnd, _):
-        defview = user32.FindWindowExW(hwnd, 0, "SHELLDLL_DefView", None)
-        if defview:
-            ww = user32.FindWindowExW(0, hwnd, "WorkerW", None)
-            if ww:
-                result[0] = ww
-
-    win32gui.EnumWindows(_cb, None)
-    return result[0]
-
-
-# ── Layout ───────────────────────────────────────────────────────────────────
-N_BARS      = 7
-BAR_W       = 3          # width of each bar
-BAR_GAP     = 9          # gap between bars
-BAR_SPACING = BAR_W + BAR_GAP
-W           = N_BARS * BAR_SPACING + 20
-H           = 60
-
-_total      = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP
-_start      = (W - _total) // 2
-BAR_XS      = [_start + i * BAR_SPACING + BAR_W // 2 for i in range(N_BARS)]
-
-
-class SentinelWidget:
+    clicked = pyqtSignal()
 
     def __init__(self):
-        self.state         = "idle"
-        self.energy        = 0.0
-        self.smooth_energy = 0.0
+        app = QApplication.instance()
+        if app is None:
+            raise RuntimeError("QApplication must exist before SentinelWidget")
+        super().__init__()
 
-        self.root = tk.Tk()
-        sw, sh    = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        self._wx  = (sw - W) // 2
-        self._wy  = sh - H - 48
+        # ── State ─────────────────────────────────────────────────────────────
+        self.state       = "idle"
+        self.energy      = 0.0
+        self._smooth_e   = 0.0
+        self._phase      = 0.0
+        self._game_mode  = False
+        self._chat_win   = None
+        self._chat_open  = False
+        self._last_click = 0.0
 
-        self.root.geometry(f"{W}x{H}+{self._wx}+{self._wy}")
-        self.root.overrideredirect(True)
-        self.root.configure(bg=CHROMA_HEX)
-        self.root.attributes("-topmost", True)
-        self.root.update()
+        # ── Window flags ──────────────────────────────────────────────────────
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFixedSize(W, H)
 
-        hwnd = self.root.winfo_id()
-        _apply_colorkey(hwnd)
-        self.root.wm_attributes("-transparentcolor", CHROMA_HEX)
+        # Bottom-center of primary screen
+        screen = QApplication.primaryScreen().geometry()
+        self.move((screen.width() - W) // 2, screen.height() - H - 40)
 
-        self.cv = tk.Canvas(self.root, width=W, height=H,
-                            bg=CHROMA_HEX, highlightthickness=0)
-        self.cv.pack()
+        # ── Timer ─────────────────────────────────────────────────────────────
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(FRAME_MS)
 
-        # One rounded bar per channel  (glow layer + sharp core)
-        self._glow = []
-        self._core = []
-        cy = H // 2
-        for x in BAR_XS:
-            g = self.cv.create_rectangle(x - BAR_W - 1, cy - 3,
-                                         x + BAR_W + 1, cy + 3,
-                                         fill=CHROMA_HEX, outline="")
-            c = self.cv.create_rectangle(x - BAR_W // 2, cy - 2,
-                                         x + BAR_W // 2, cy + 2,
-                                         fill=CHROMA_HEX, outline="")
-            self._glow.append(g)
-            self._core.append(c)
+        self.show()
 
-        self._cy = cy
-        self.animate()
-        self.root.after(600,  self._attach)
-        self.root.after(1200, self._keep_alive)
-
-    # ── API ──────────────────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────────────────────────
     def set_idle(self):
-        self.root.after(0, lambda: setattr(self, "state", "idle"))
+        self.state = "idle"
+
+    def set_listening(self):
+        self.state = "listening"
 
     def set_speaking(self):
-        self.root.after(0, lambda: setattr(self, "state", "speaking"))
+        self.state = "speaking"
 
-    def set_energy(self, v):
-        self.root.after(0, lambda: setattr(self, "energy",
-                                           max(0.0, min(1.0, float(v)))))
+    def set_energy(self, v: float):
+        self.energy = max(0.0, min(1.0, float(v)))
 
-    # ── Desktop ──────────────────────────────────────────────────────────────
-    def _attach(self):
-        self.root.update_idletasks()
-        hwnd    = self.root.winfo_id()
-        workerw = _find_workerw()
-        if workerw:
-            user32.SetParent(hwnd, workerw)
-            style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE,
-                                   (style & ~win32con.WS_POPUP) | win32con.WS_CHILD)
-            _apply_colorkey(hwnd)
-            win32gui.SetWindowPos(hwnd, None, self._wx, self._wy, W, H,
-                                  win32con.SWP_NOZORDER | win32con.SWP_SHOWWINDOW)
-            print("[Sentinel] Embedded in WorkerW ✓")
+    def set_game_mode(self, on: bool):
+        self._game_mode = on
+        self.hide() if on else self.show()
+
+    def set_chat_window(self, win):
+        self._chat_win = win
+
+    def on_chat_closed_externally(self):
+        self._chat_open = False
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+    def _tick(self):
+        self._phase += FRAME_MS / 1000.0
+        target = self.energy if self.state == "speaking" else 0.0
+        self._smooth_e = self._smooth_e * 0.85 + target * 0.15
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        dx = event.position().x() - CX
+        dy = event.position().y() - CY
+        # Only accept clicks inside the halo area
+        if math.sqrt(dx * dx + dy * dy) > R_GLOW:
+            return
+        now = time.perf_counter()
+        if now - self._last_click < CLICK_COOLDOWN:
+            return
+        self._last_click = now
+
+        if self._chat_win is None:
+            return
+        if not self._chat_open:
+            self._chat_open = True
+            self._chat_win.show_animated()
         else:
-            win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
-            print("[Sentinel] TOPMOST fallback")
+            self._chat_open = False
+            self._chat_win.close_window()
 
-    def _keep_alive(self):
-        try:
-            hwnd = self.root.winfo_id()
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-        except Exception:
-            pass
-        self.root.after(200, self._keep_alive)
+    # ── Paint ─────────────────────────────────────────────────────────────────
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-    # ── Animation ────────────────────────────────────────────────────────────
-    def animate(self):
-        t        = time.time()
-        cy       = self._cy
-        speaking = self.state == "speaking"
-        mid      = N_BARS // 2
+        t = self._phase
+        s = self.state
+        e = self._smooth_e
 
-        target_e           = self.energy if speaking else 0.0
-        self.smooth_energy = self.smooth_energy * 0.80 + target_e * 0.20
+        # Per-state values
+        if s == "idle":
+            breath      = math.sin(t * 0.9) * 0.5 + 0.5
+            core_a      = int(50  + breath * 40)
+            glow_a      = int(15  + breath * 15)
+            inner_a     = int(25  + breath * 25)
+            r_h         = R_CORE + 4 + breath * 5
+            cr, cg, cb  = COL_BLUE
+            rw          = 1.2
 
-        for i, x in enumerate(BAR_XS):
-            dist = abs(i - mid) / mid   # 0=centre 1=edge
+        elif s == "listening":
+            breath      = math.sin(t * 2.4) * 0.5 + 0.5
+            core_a      = int(140 + breath * 70)
+            glow_a      = int(45  + breath * 45)
+            inner_a     = int(65  + breath * 55)
+            r_h         = R_CORE + 6 + breath * 12
+            cr, cg, cb  = COL_CYAN
+            rw          = 1.6
 
-            if not speaking:
-                # Idle: slow organic breath — centre taller, edges tiny dots
-                breath = (math.sin(t * 1.6 + i * 0.9) * 0.5 + 0.5)  # 0-1
-                h      = 2 + (1 - dist) * 3 + breath * 2
-                # Soft white glow, semi-transparent feel via brightness
-                alpha  = int(180 + (1 - dist) * 60)   # 180-240
-                col    = f"#{alpha:02x}{alpha:02x}{alpha:02x}"
-                gcol   = f"#{max(0,alpha-80):02x}{max(0,alpha-80):02x}{max(0,alpha-80):02x}"
+        else:  # speaking
+            beat        = math.sin(t * 9.0) * 0.25 + 0.75
+            boost       = e * 0.65 + beat * 0.35
+            core_a      = int(170 + boost * 80)
+            glow_a      = int(55  + boost * 85)
+            inner_a     = int(90  + boost * 120)
+            r_h         = R_CORE + 9 + boost * 16
+            blend       = e * 0.3
+            cr = int(COL_BLUE[0] * (1 - blend) + COL_PINK[0] * blend)
+            cg = int(COL_BLUE[1] * (1 - blend) + COL_PINK[1] * blend)
+            cb = int(COL_BLUE[2] * (1 - blend) + COL_PINK[2] * blend)
+            rw          = 1.8
 
-            else:
-                # Speaking: fast reactive wave with centre bias
-                se    = self.smooth_energy
-                wave  = math.sin(t * 16 + i * 1.5) * 0.35
-                env   = 1 - dist * 0.45
-                h     = max(2, (se * 28 + wave * 10) * env)
-                # Pure white core, soft white glow
-                bv    = int(min(255, 210 + se * 45))
-                col   = f"#{bv:02x}{bv:02x}{bv:02x}"
-                gv    = int(bv * 0.45)
-                gcol  = f"#{gv:02x}{gv:02x}{gv:02x}"
+        center = QPointF(CX, CY)
 
-            top = cy - h
-            bot = cy + h
+        # Layer 1 — outer halo
+        g1 = QRadialGradient(center, r_h)
+        g1.setColorAt(0.0, QColor(cr, cg, cb, glow_a))
+        g1.setColorAt(0.55, QColor(cr, cg, cb, glow_a // 4))
+        g1.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setBrush(QBrush(g1))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(center, r_h, r_h)
 
-            # Glow rect (wider, softer)
-            self.cv.coords(self._glow[i],
-                           x - BAR_W - 1, top - 2,
-                           x + BAR_W + 1, bot + 2)
-            # Core rect (sharp)
-            self.cv.coords(self._core[i],
-                           x - BAR_W,     top,
-                           x + BAR_W,     bot)
+        # Layer 2 — inner fill (soft white centre)
+        g2 = QRadialGradient(QPointF(CX, CY - 3), R_INNER)
+        g2.setColorAt(0.0, QColor(255, 255, 255, inner_a))
+        g2.setColorAt(0.5, QColor(cr, cg, cb, inner_a // 2))
+        g2.setColorAt(1.0, QColor(cr, cg, cb, 0))
+        p.setBrush(QBrush(g2))
+        p.drawEllipse(center, R_CORE - 2, R_CORE - 2)
 
-            self.cv.itemconfig(self._glow[i], fill=gcol)
-            self.cv.itemconfig(self._core[i], fill=col)
+        # Layer 3 — core ring
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        pen = QPen(QColor(cr, cg, cb, core_a), rw)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawEllipse(center, R_CORE, R_CORE)
 
-        self.root.after(30, self.animate)
+        # Layer 4 — specular highlight (top-left glint)
+        g3 = QRadialGradient(QPointF(CX - 5, CY - 7), 5)
+        g3.setColorAt(0.0, QColor(255, 255, 255, core_a // 2))
+        g3.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(QBrush(g3))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(CX - 5, CY - 7), 5, 5)
+
+        p.end()
 
     def run(self):
-        self.root.mainloop()
+        QApplication.instance().exec()
 
 
-# ── Demo ─────────────────────────────────────────────────────────────────────
+# ── Demo ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys
     import threading
 
-    w = SentinelWidget()
+    app = QApplication(sys.argv)
+    w   = SentinelWidget()
 
     def _demo():
         time.sleep(2)
+        w.set_listening()
+        time.sleep(3)
         w.set_speaking()
-        for step in range(80):
-            v = abs(math.sin(step * 0.18)) * 0.9 + 0.1
-            w.set_energy(v)
-            time.sleep(0.08)
+        for i in range(150):
+            w.set_energy(abs(math.sin(i * 0.14)) * 0.9 + 0.1)
+            time.sleep(0.05)
         w.set_idle()
 
     threading.Thread(target=_demo, daemon=True).start()
-    w.run()
+    sys.exit(app.exec())
