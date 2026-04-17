@@ -109,12 +109,4 @@ def fast_route(text: str) -> bool:
                 launch_app_from_command(f"open {app}")
                 return True
 
-    # Bare 1-2 word utterance with no question words
-    if len(words) <= 2:
-        bare = " ".join(w for w in words if w not in FILLER_WORDS)
-        if bare:
-            print(f"[Router] Bare app: {bare}")
-            launch_app_from_command(f"open {bare}")
-            return True
-
     return False

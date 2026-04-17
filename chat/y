@@ -1,0 +1,310 @@
+import threading
+from chat.chat import WIN_W, WIN_H, MIN_W, MIN_H, HEADER_H
+from chat.chat import SIDEBAR_W
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QApplication
+)
+
+from PyQt6.QtCore import (
+    Qt, QTimer, QPropertyAnimation, QEasingCurve,
+    pyqtSlot, Q_ARG, QMetaObject
+)
+
+from PyQt6.QtGui import QFont
+
+# your internal imports
+from chat.view import ChatView
+from chat.components import InputBar, Divider
+from chat.chat import GlassPane, WaveBackground, NavItem, _font
+
+# ── Main chat window ──────────────────────────────────────────────────────────
+class ChatWindow(QWidget):
+
+    def __init__(self, ai, chat_memory, on_close=None):
+        super().__init__()
+        self._ai       = ai
+        self._memory   = chat_memory
+        self._on_close = on_close
+        self._busy     = False
+        self._drag_pos = None
+        self._anim     = None
+
+        self._setup_window()
+        self._build_ui()
+        self._load_history()
+
+    # ── Window setup ──────────────────────────────────────────────────────────
+    def _setup_window(self):
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            # No WindowStaysOnTopHint — chat behaves like a normal window
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(
+            (screen.width()  - WIN_W) // 2,
+            (screen.height() - WIN_H) // 2,
+            WIN_W, WIN_H
+        )
+        self.setMinimumSize(MIN_W, MIN_H)
+
+    # ── UI construction ───────────────────────────────────────────────────────
+    def _build_ui(self):
+        # Glass + wave background
+        self.glass = GlassPane(self)
+        self.glass.setGeometry(self.rect())
+        self._waves = WaveBackground(self)
+        self._waves.setGeometry(self.rect())
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Header
+        header = QWidget()
+        header.setFixedHeight(HEADER_H)
+        header.setStyleSheet("background:transparent;")
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(20, 0, 16, 0)
+        hl.setSpacing(10)
+
+        dot = QLabel()
+        dot.setFixedSize(7, 7)
+        dot.setStyleSheet("background:#52b7ff;border-radius:3px;")
+        hl.addWidget(dot)
+
+        title = QLabel("SENTINEL")
+        title.setFont(_font(11, QFont.Weight.DemiBold))
+        title.setStyleSheet(
+            "color:rgba(240,244,252,0.92); letter-spacing:2.5px;"
+            "background:transparent;"
+        )
+        hl.addWidget(title)
+        hl.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background:transparent; border:none;
+                color:rgba(255,255,255,70); font-size:11px;
+                border-radius:14px;
+            }
+            QPushButton:hover {
+                background:rgba(255,75,75,0.22);
+                color:rgba(255,130,130,255);
+            }
+        """)
+        close_btn.clicked.connect(self.close_window)
+        hl.addWidget(close_btn)
+
+        root.addWidget(header)
+        root.addWidget(Divider())
+
+        # Body — sidebar + chat
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._build_sidebar())
+        self._chat_view = ChatView()
+        body.addWidget(self._chat_view, 1)
+
+        # input bar
+        self._input_bar = InputBar()
+        self._input_bar.submitted.connect(self._on_user_message)
+
+        root.addWidget(self._input_bar)
+        root.addLayout(body, 1)
+        self.setLayout(root)
+
+    def _build_sidebar(self):
+        w = QWidget()
+        w.setFixedWidth(SIDEBAR_W)
+        w.setStyleSheet("background:transparent;")
+
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(8, 16, 8, 16)
+        lay.setSpacing(4)
+
+        section = QLabel("NAVIGATION")
+        section.setFont(_font(8, QFont.Weight.DemiBold))
+        section.setStyleSheet(
+            "color:rgba(82,183,255,80); letter-spacing:1.5px;"
+            "padding:0 8px 6px 8px; background:transparent;"
+        )
+        lay.addWidget(section)
+
+        self._nav_chat = NavItem("Chat", active=True)
+        self._nav_history = NavItem("History")
+        self._nav_settings = NavItem("Settings")
+
+        self._nav_chat.clicked.connect(lambda: self._switch_nav("chat"))
+        self._nav_history.clicked.connect(lambda: self._switch_nav("history"))
+        self._nav_settings.clicked.connect(lambda: self._switch_nav("settings"))
+
+        lay.addWidget(self._nav_chat)
+        lay.addWidget(self._nav_history)
+        lay.addWidget(self._nav_settings)
+        lay.addStretch()
+
+        ver = QLabel("v0.1")
+        ver.setFont(_font(8))
+        ver.setStyleSheet(
+            "color:rgba(255,255,255,25); padding:0 8px; background:transparent;"
+        )
+        lay.addWidget(ver)
+        return w
+
+
+
+    # ── Nav switching ─────────────────────────────────────────────────────────
+    def _switch_nav(self, section: str):
+        for name, item in [
+            ("chat", self._nav_chat),
+            ("history", self._nav_history),
+            ("settings", self._nav_settings),
+        ]:
+            item.set_active(name == section)
+
+    # ── History loading ───────────────────────────────────────────────────────
+    def _load_history(self):
+        messages = self._memory.get_messages()
+        if not messages:
+            self._chat_view.insert_bubble("Hey — what can I help you with?", "assistant")
+            return
+        for msg in messages:
+            role = msg.get("role")
+            text = msg.get("content", "")
+            src  = msg.get("source", "text")
+            if role in ("user", "assistant"):
+                self._chat_view.insert_bubble(text, role, src)
+        self._chat_view.scroll_to_bottom()
+
+
+
+    # ── User message handling ─────────────────────────────────────────────────
+    def _on_user_message(self, text: str):
+        if self._busy:
+            return
+        self._busy = True
+        self._input_bar.set_enabled(False)
+        self._chat_view.insert_bubble(text, "user", "text")
+        self._chat_view.scroll_to_bottom()
+        self._chat_view.show_typing()
+        threading.Thread(target=self._run_ai, args=(text,), daemon=True).start()
+
+    def _run_ai(self, user_text: str):
+        from ai import build_system_prompt, run_memory_async
+        from router import fast_route
+
+        # Try fast_route first — handles app launching, system commands
+        if fast_route(user_text):
+            QMetaObject.invokeMethod(
+                self, "_on_ai_response_slot",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, "Done.")
+            )
+            return
+
+        self._memory.add_user(user_text)
+
+        messages = [{"role": "system", "content": build_system_prompt()}]
+        messages += self._memory.get_messages()
+
+        # Deduplicate
+        fixed, last = [], None
+        for m in messages:
+            if m["role"] != last:
+                fixed.append(m)
+                last = m["role"]
+
+        response = self._ai.respond(fixed, on_sentence=None, hud=None)
+        if not response:
+            response = "Sorry, something went wrong. Please try again."
+
+        self._memory.add_assistant(response)
+        run_memory_async(user_text, response)
+
+        QMetaObject.invokeMethod(
+            self, "_on_ai_response_slot",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, response)
+        )
+
+    @pyqtSlot(str)
+    def _on_ai_response_slot(self, text: str):
+        self._chat_view.hide_typing()
+        self._chat_view.insert_bubble(text, "assistant", "text")
+        self._chat_view.scroll_to_bottom()
+        self._busy = False
+        self._input_bar.set_enabled(True)
+        self._input_bar.focus()
+
+    # ── Voice mirroring — called from voice loop thread ───────────────────────
+    def push_exchange(self, user_text: str, ai_text: str):
+        """
+        Called by the voice loop after a voice exchange completes.
+        Thread-safe — uses QueuedConnection to update UI on main thread.
+        """
+        QMetaObject.invokeMethod(
+            self, "_push_exchange_slot",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, user_text),
+            Q_ARG(str, ai_text),
+        )
+
+    @pyqtSlot(str, str)
+    def _push_exchange_slot(self, user_text: str, ai_text: str):
+        self._chat_view.insert_bubble(user_text, "user",      "voice")
+        self._chat_view.insert_bubble(ai_text,  "assistant",  "voice")
+        self._chat_view.scroll_to_bottom()
+
+    # ── Window chrome ─────────────────────────────────────────────────────────
+    def show_animated(self):
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        a = QPropertyAnimation(self, b"windowOpacity", self)
+        a.setDuration(260)
+        a.setStartValue(0.0)
+        a.setEndValue(1.0)
+        a.setEasingCurve(QEasingCurve.Type.OutCubic)
+        a.start()
+        self._anim = a
+        QTimer.singleShot(280, self._input_bar.focus)
+
+    def close_window(self):
+        a = QPropertyAnimation(self, b"windowOpacity", self)
+        a.setDuration(180)
+        a.setStartValue(self.windowOpacity())
+        a.setEndValue(0.0)
+        a.setEasingCurve(QEasingCurve.Type.InCubic)
+        a.finished.connect(self.hide)
+        a.start()
+        self._anim = a
+        if self._on_close:
+            QTimer.singleShot(200, self._on_close)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.glass.setGeometry(self.rect())
+        self._waves.setGeometry(self.rect())
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and e.position().y() < HEADER_H:
+            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._drag_pos and e.buttons() == Qt.MouseButton.LeftButton:
+            self.move(e.globalPosition().toPoint() - self._drag_pos)
+
+    def mouseReleaseEvent(self, _):
+        self._drag_pos = None
+
+    def closeEvent(self, e):
+        e.ignore()
+        self.close_window()

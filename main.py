@@ -1,9 +1,9 @@
 """
 main.py — Sentinel entry point
 
-Everything Qt (widget, menu, HUD, chat) runs on the main thread via QApplication.
-The voice loop runs on a daemon thread.
-Both voice and chat share one ChatMemory instance.
+Everything Qt (widget, menu, HUD, chat) runs on the main thread.
+Voice loop runs on a daemon thread.
+Voice exchanges are mirrored into the chat window via push_exchange().
 """
 
 import sys
@@ -21,7 +21,7 @@ from ai import SentinelAI, build_system_prompt, run_memory_async
 from widget import SentinelWidget
 from menu import SentinelMenu
 from hud import HUD
-from chat import ChatWindow
+from chat.window import ChatWindow
 
 
 def _dedup_roles(messages: list) -> list:
@@ -34,8 +34,8 @@ def _dedup_roles(messages: list) -> list:
     return fixed
 
 
-# Module-level ref so voice loop can reach widget
-widget_ref = [None]
+widget_ref   = [None]
+chat_win_ref = [None]
 
 
 def run_voice_loop(ai, hud, shared_memory: ChatMemory):
@@ -76,6 +76,9 @@ def run_voice_loop(ai, hud, shared_memory: ChatMemory):
             continue
 
         if fast_route(req):
+            # Mirror fast-route actions into chat too
+            if chat_win_ref[0]:
+                chat_win_ref[0].push_exchange(req, "Done.")
             continue
 
         widget_ref[0].set_listening()
@@ -104,6 +107,10 @@ def run_voice_loop(ai, hud, shared_memory: ChatMemory):
         run_memory_async(req, full_response)
         shared_memory.add_assistant(full_response)
 
+        # Mirror voice exchange into chat window
+        if chat_win_ref[0]:
+            chat_win_ref[0].push_exchange(req, full_response)
+
         if req == "exit":
             break
 
@@ -112,38 +119,30 @@ if __name__ == "__main__":
     app           = QApplication(sys.argv)
     shared_memory = ChatMemory()
 
-    # ── AI instances ──────────────────────────────────────────────────────────
     voice_ai = SentinelAI()
     chat_ai  = SentinelAI()
 
-    # ── HUD ───────────────────────────────────────────────────────────────────
     hud = HUD(app)
 
-    # ── Widget ────────────────────────────────────────────────────────────────
     widget        = SentinelWidget()
     widget_ref[0] = widget
 
-    # ── Chat window ───────────────────────────────────────────────────────────
     def _on_chat_closed():
         widget.on_chat_closed_externally()
 
-    chat_win = ChatWindow(
+    chat_win          = ChatWindow(
         ai=chat_ai,
         chat_memory=shared_memory,
         on_close=_on_chat_closed,
     )
+    chat_win_ref[0]   = chat_win
 
-    # ── Radial menu ───────────────────────────────────────────────────────────
     menu = SentinelMenu(widget_ref=widget, chat_win_ref=chat_win)
-
-    # Wire widget click → menu toggle instead of direct chat open
     widget.set_menu(menu)
 
-    # ── Voice wiring ──────────────────────────────────────────────────────────
     voice.widget = widget
     voice.hud    = hud
 
-    # ── Voice loop on daemon thread ───────────────────────────────────────────
     threading.Thread(
         target=run_voice_loop,
         args=(voice_ai, hud, shared_memory),
