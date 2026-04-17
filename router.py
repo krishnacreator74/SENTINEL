@@ -16,7 +16,7 @@ OPEN_TRIGGERS = {"open", "launch", "start", "run", "load"}
 FILLER_WORDS = {
     "please", "can", "you", "the", "a", "an",
     "app", "application", "browser", "me", "up", "now",
-    "could", "would", "will", "just", "hey", "sentinel"
+    "could", "would", "will", "just", "hey", "sentinel", "for"
 }
 
 APP_ALIASES = {

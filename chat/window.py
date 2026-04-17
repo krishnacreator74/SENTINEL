@@ -19,6 +19,19 @@ from chat.chat import GlassPane, WaveBackground, _font
 
 class ChatWindow(QWidget):
 
+    def push_exchange(self, user_text: str, ai_text: str):
+        # show user
+        self._chat_view.insert_bubble(user_text, "user")
+
+        # show typing (optional but nice)
+        self._chat_view.show_typing()
+
+        def _finish():
+            self._chat_view.hide_typing()
+            self._chat_view.insert_bubble(ai_text, "assistant")
+
+        QTimer.singleShot(300, _finish)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -167,6 +180,9 @@ class ChatWindow(QWidget):
         from router import fast_route
 
         if fast_route(user_text):
+            import time
+            time.sleep(0.3)  # small delay for realism
+
             QMetaObject.invokeMethod(
                 self, "_on_ai_response_slot",
                 Qt.ConnectionType.QueuedConnection,
