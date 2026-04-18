@@ -1,118 +1,98 @@
 """
 main.py — Sentinel entry point
-
-Everything Qt (widget, menu, HUD, chat) runs on the main thread.
-Voice loop runs on a daemon thread.
-Voice exchanges are mirrored into the chat window via push_exchange().
+This file initializes the Sentinel application, setting up the AI pipeline, voice interface, chat interface, and HUD. It starts the main event loop and the voice processing thread.
 """
 
 import sys
 import time
 import threading
-
+from core.pipeline import SentinelPipeline
 from PyQt6.QtWidgets import QApplication
 
 import voice
 from ears import listen
 from wake import wait_for_wake
-from router import fast_route, _add_close_hud_command
 from memory_chat import ChatMemory
-from ai import SentinelAI, build_system_prompt, run_memory_async
+from ai import SentinelAI
 from widget import SentinelWidget
 from menu import SentinelMenu
 from hud import HUD
 from chat.window import ChatWindow
 
-
-def _dedup_roles(messages: list) -> list:
-    fixed, last_role = [], None
-    for msg in messages:
-        if msg["role"] == last_role:
-            continue
-        fixed.append(msg)
-        last_role = msg["role"]
-    return fixed
-
-
 widget_ref   = [None]
 chat_win_ref = [None]
+stop_event = threading.Event()
 
-
-def run_voice_loop(ai, hud, shared_memory: ChatMemory):
+def run_voice_loop(pipeline, hud):
     last_wake  = 0
     saved_gate = None
 
-    while True:
-        time.sleep(0.1)
-        if time.time() - last_wake < 3:
-            continue
+    try:
 
-        saved_gate = wait_for_wake(silence_gate=saved_gate)
-        last_wake  = time.time()
+        while not stop_event.is_set():
+            time.sleep(0.1)
+            if time.time() - last_wake < 3:
+                continue
 
-        voice.voice_of_ai("yes?")
-        req = listen()
-        if not req:
-            print("No speech detected.")
-            continue
+            try:
+                saved_gate = wait_for_wake(silence_gate=saved_gate)
+            except Exception as e:
+                print("[Voice Loop Error]", e)
+                break
+            last_wake  = time.time()
 
-        req = req.lower().strip()
-        if len(req) < 2:
-            continue
+            voice.voice_of_ai("yes?")
+            req = listen()
+            if not req:
+                print("No speech detected.")
+                continue
 
-        print("You:", req)
+            req = req.lower().strip()
+            if len(req) < 2:
+                continue
 
-        # Game mode voice commands
-        if "game mode on" in req:
-            widget_ref[0].set_game_mode(True)
-            voice.voice_of_ai("Game mode on.")
-            continue
-        if "game mode off" in req:
-            widget_ref[0].set_game_mode(False)
-            voice.voice_of_ai("I'm back.")
-            continue
+            print("You:", req)
 
-        if _add_close_hud_command(req, hud):
-            continue
+            # Game mode voice commands
+            if "game mode on" in req:
+                widget_ref[0].set_game_mode(True)
+                voice.voice_of_ai("Game mode on.")
+                continue
+            if "game mode off" in req:
+                widget_ref[0].set_game_mode(False)
+                voice.voice_of_ai("I'm back.")
+                continue
 
-        if fast_route(req):
-            # Mirror fast-route actions into chat too
+            widget_ref[0].set_listening()
+
+            widget_ref[0].set_speaking()
+                        
+            full_response = pipeline.process(
+                req,
+                hud=hud,
+                speak_fn=voice.voice_of_ai
+            )
+
+            widget_ref[0].set_idle()
+
+            # If handled by router, skip AI/chat
+            if full_response == "__handled__":
+                if chat_win_ref[0]:
+                    chat_win_ref[0].push_exchange(req, "Done.")
+                continue
+
+            if not full_response:
+                continue
+
+            # Mirror voice exchange into chat window
             if chat_win_ref[0]:
-                chat_win_ref[0].push_exchange(req, "Done.")
-            continue
+                chat_win_ref[0].push_exchange(req, full_response)
 
-        widget_ref[0].set_listening()
-
-        if not shared_memory.messages or shared_memory.messages[-1]["role"] != "user":
-            shared_memory.add_user(req)
-
-        messages = _dedup_roles(
-            [{"role": "system", "content": build_system_prompt()}]
-            + shared_memory.get_messages()
-        )
-
-        widget_ref[0].set_speaking()
-
-        full_response = ai.respond(
-            messages,
-            on_sentence=voice.voice_of_ai,
-            hud=hud,
-        )
-
-        widget_ref[0].set_idle()
-
-        if not full_response:
-            continue
-
-        run_memory_async(req, full_response)
-        shared_memory.add_assistant(full_response)
-
-        # Mirror voice exchange into chat window
-        if chat_win_ref[0]:
-            chat_win_ref[0].push_exchange(req, full_response)
-
-        if req == "exit":
-            break
+            if req == "exit":
+                stop_event.set()
+                break
+    except Exception as e:
+        print("[Wake Error]", e)
 
 
 if __name__ == "__main__":
@@ -121,6 +101,7 @@ if __name__ == "__main__":
 
     voice_ai = SentinelAI()
     chat_ai  = SentinelAI()
+    pipeline = SentinelPipeline(voice_ai, shared_memory)
 
     hud = HUD(app)
 
@@ -145,9 +126,11 @@ if __name__ == "__main__":
 
     threading.Thread(
         target=run_voice_loop,
-        args=(voice_ai, hud, shared_memory),
+        args=(pipeline, hud),
         daemon=True,
     ).start()
 
     print("Sentinel started.")
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    stop_event.set()
+    sys.exit(exit_code)

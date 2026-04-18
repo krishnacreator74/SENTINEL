@@ -152,6 +152,13 @@ class SentinelAI:
                 print(f"[AI] WARNING: '{MODEL_NAME}' not loaded!")
         except Exception as e:
             raise RuntimeError(f"[AI] Cannot reach LM Studio: {e}")
+    
+    def _execute_tool(self, name: str, input_: str, original_question: str):
+        return run_tool_by_name(
+            name,
+            input_,
+            original_question=original_question
+        )
 
     def respond(self, messages: list, on_sentence=None, hud=None) -> str:
         """
@@ -170,6 +177,8 @@ class SentinelAI:
             if on_sentence:
                 on_sentence(msg)
             return msg
+    
+
 
         # ── Step 1: announce if we're about to tool ────────────────────────────
         tools_requested = result.get("tools", [])
@@ -250,9 +259,10 @@ class SentinelAI:
             input_ = tool_def.get("input", "")
             print(f"[AI] Running tool '{name}' with input: '{input_}'")
             try:
-                results[idx] = run_tool_by_name(
-                    name, input_,
-                    original_question=original_question
+                results[idx] = self._execute_tool(
+                    name,
+                    input_,
+                    original_question
                 )
             except Exception as e:
                 print(f"[AI] Tool '{name}' error: {e}")

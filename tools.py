@@ -98,7 +98,7 @@ def _extract_images(text: str) -> list[str]:
 class Tool:
     name = "base"
 
-    def run(self, input_: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         raise NotImplementedError
 
 
@@ -106,14 +106,14 @@ class Tool:
 class WebSearchTool(Tool):
     name = "search"
 
-    def run(self, input_: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         ctx               = context or {}
-        original_question = ctx.get("original_question", input_)
+        original_question = ctx.get("original_question", input_text)
         user_context      = _load_user_context()
 
         search_history: list[dict] = []
         all_images:     list[str]  = []
-        current_query  = input_
+        current_query  = input_text
 
         for step in range(1, SEARCH_HARD_CAP + 1):
             print(f"[Search] Step {step} — '{current_query}'")
@@ -185,21 +185,21 @@ Reply with exactly one of:
 class OpenAppTool(Tool):
     name = "open_app"
 
-    def run(self, input_: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         # Delegates to your existing launcher logic
         try:
             from app_launcher import find_and_open_app
-            find_and_open_app(input_)
-            return ToolResult(text=f"Opened {input_}.", images=[])
+            find_and_open_app(input_text)
+            return ToolResult(text=f"Opened {input_text}.", images=[])
         except Exception as e:
-            return ToolResult(text=f"Could not open {input_}: {e}", images=[])
+            return ToolResult(text=f"Could not open {input_text}: {e}", images=[])
 
 
 # ── System Command ─────────────────────────────────────────────────────────────
 class SystemCommandTool(Tool):
     name = "system_command"
 
-    def run(self, input_: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         import subprocess
         ALLOWED = {
             "shutdown":  ["shutdown", "/s", "/t", "5"],
@@ -207,7 +207,7 @@ class SystemCommandTool(Tool):
             "sleep":     ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
             "lock":      ["rundll32.exe", "user32.dll,LockWorkStation"],
         }
-        cmd = input_.lower().strip()
+        cmd = input_text.lower().strip()
         if cmd in ALLOWED:
             subprocess.run(ALLOWED[cmd])
             return ToolResult(text=f"Executed system command: {cmd}.", images=[])
@@ -215,15 +215,31 @@ class SystemCommandTool(Tool):
 
 
 # ── Registry ───────────────────────────────────────────────────────────────────
-TOOLS: dict[str, Tool] = {t.name: t for t in [
-    WebSearchTool(),
-    OpenAppTool(),
-    SystemCommandTool(),
-]}
+TOOLS: dict[str, Tool] = {}
+
+def register_tool(tool: Tool):
+    TOOLS[tool.name] = tool
 
 
-def run_tool_by_name(name: str, input_: str, original_question: str = "") -> ToolResult:
+# ── Register tools ──
+register_tool(WebSearchTool())
+register_tool(OpenAppTool())
+register_tool(SystemCommandTool())
+
+
+def run_tool_by_name(name: str, input_text: str, original_question: str = "") -> ToolResult:
     tool = TOOLS.get(name)
+
     if tool is None:
         return ToolResult(text=f"Unknown tool: '{name}'.", images=[])
-    return tool.run(input_, context={"original_question": original_question})
+
+    try:
+        return tool.run(
+            input_text,
+            context={"original_question": original_question}
+        )
+    except Exception as e:
+        return ToolResult(
+            text=f"Tool '{name}' failed: {e}",
+            images=[]
+        )
