@@ -4,7 +4,7 @@ import numpy as np
 import pickle
 import time
 from collections import deque
-import ears
+import voice.ears as ears
 import soundfile as sf
 import os
 

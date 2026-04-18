@@ -1,10 +1,10 @@
-
-from voice import voice_of_ai
+# commands.py
+from voice.voice import voice_of_ai
 import subprocess
 import os
 import sys
 import json
-from ears import listen
+from voice.ears import listen
 import time
 
 DATA_FILE = "known_apps.json"

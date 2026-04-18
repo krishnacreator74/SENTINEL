@@ -9,10 +9,10 @@ import threading
 from core.pipeline import SentinelPipeline
 from PyQt6.QtWidgets import QApplication
 
-import voice
-from ears import listen
-from wake import wait_for_wake
-from memory_chat import ChatMemory
+from voice import voice
+from voice.ears import listen
+from voice.wake import wait_for_wake
+from memory.memory_chat import ChatMemory
 from ai import SentinelAI
 from widget import SentinelWidget
 from menu import SentinelMenu

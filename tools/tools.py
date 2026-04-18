@@ -121,8 +121,8 @@ class OpenAppTool(Tool):
     def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         # Delegates to your existing launcher logic
         try:
-            from app_launcher import find_and_open_app
-            find_and_open_app(input_text)
+            from commands import launch_app_from_command
+            launch_app_from_command(f"open {input_text}")
             return ToolResult(text=f"Opened {input_text}.", images=[])
         except Exception as e:
             return ToolResult(text=f"Could not open {input_text}: {e}", images=[])

@@ -15,8 +15,8 @@ import threading
 import httpx
 
 from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
-from memory_persistent import load_memory
-from memory_analyzer import analyze_and_store_memory
+from memory.memory_persistent import load_memory
+from memory.memory_analyzer import analyze_and_store_memory
 from tools.tools import run_tool_by_name, ToolResult
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
@@ -33,10 +33,10 @@ def build_system_prompt() -> str:
 
 
 # ── Memory helper ──────────────────────────────────────────────────────────────
-def run_memory_async(user_text: str, assistant_text: str):
+def run_memory_async(parsed_response: dict):
     def task():
         try:
-            analyze_and_store_memory(user_text, assistant_text)
+            analyze_and_store_memory(parsed_response)
         except Exception as e:
             print(f"[Memory] Error: {e}")
     threading.Thread(target=task, daemon=True).start()
@@ -120,7 +120,7 @@ def _split_sentences(text: str) -> list[str]:
 
 # ── HUD + voice delivery ───────────────────────────────────────────────────────
 def _speak(text: str, on_sentence, hud=None, use_hud: bool = False, title: str = "SENTINEL"):
-    import voice as _voice
+    from voice import voice as _voice
     if not on_sentence:
         if hud and use_hud:
             hud.finish_all()
@@ -197,7 +197,10 @@ class SentinelAI:
 
         # ── Step 2: run tools ──────────────────────────────────────────────────
         if not tools_requested or not awaiting:
-            return response_text
+            return {
+                "text": response_text,
+                "raw": result
+            }
 
         tool_results = self._run_tools_parallel(tools_requested, messages)
 
@@ -238,7 +241,10 @@ class SentinelAI:
                     hud.append_image(url)
             threading.Thread(target=_imgs, daemon=True).start()
 
-        return final_text
+        return {
+            "text": final_text,
+            "raw": final_result  # ← full parsed JSON
+        }
 
     def _run_tools_parallel(self, tools_requested: list, messages: list) -> list:
         """

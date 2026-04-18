@@ -41,17 +41,23 @@ class SentinelPipeline:
         )
 
         # Call AI
-        full_response = self.ai.respond(
+        result = self.ai.respond(
             messages,
             on_sentence=speak_fn,
             hud=hud,
         )
 
+        if not result:
+            return None
+
+        full_response = result["text"]
+        parsed_json   = result["raw"]
+
         if not full_response:
             return None
 
         # Memory update
-        run_memory_async(req, full_response)
+        run_memory_async(parsed_json)
         self.memory.add_assistant(full_response)
 
         return full_response
