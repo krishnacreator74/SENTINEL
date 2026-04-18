@@ -15,84 +15,17 @@ import json
 import os
 import httpx
 from typing import NamedTuple
-
-from web_search import search_and_extract
+from tools.context_helpers import load_user_context
+from tools.web_search import search_and_extract
 from config import MODEL_NAME
+from tools.helpers import llm, extract_images
+class ToolResult(NamedTuple):
+    text: str
+    images: list[str]
 
 LM_STUDIO_URL   = "http://localhost:1234/v1/chat/completions"
 MEMORY_FILE     = "user_memory.json"
 SEARCH_HARD_CAP = 7
-
-
-# ── Tool result container ──────────────────────────────────────────────────────
-class ToolResult(NamedTuple):
-    text:   str
-    images: list[str]
-
-
-# ── Shared helpers ─────────────────────────────────────────────────────────────
-def _load_user_context() -> str:
-    if not os.path.exists(MEMORY_FILE):
-        return ""
-    try:
-        with open(MEMORY_FILE) as f:
-            memory = json.load(f)
-    except Exception:
-        return ""
-    if not memory:
-        return ""
-    parts = []
-    specs = memory.get("specs") or memory.get("hardware") or memory.get("rig")
-    if isinstance(specs, dict):
-        parts.append("Rig: " + ", ".join(f"{k}={v}" for k, v in specs.items()))
-    elif isinstance(specs, str):
-        parts.append(f"Rig: {specs}")
-    prefs = memory.get("preferences")
-    if isinstance(prefs, list):
-        parts.append("Preferences: " + ", ".join(prefs))
-    skip = {"specs", "hardware", "rig", "preferences"}
-    for k, v in memory.items():
-        if k in skip:
-            continue
-        if isinstance(v, str):
-            parts.append(f"{k}: {v}")
-        elif isinstance(v, list) and all(isinstance(i, str) for i in v):
-            parts.append(f"{k}: {', '.join(v)}")
-    return " | ".join(parts)
-
-
-def _llm(messages: list, temperature: float = 0.3) -> str:
-    payload = {
-        "model":       MODEL_NAME,
-        "messages":    messages,
-        "temperature": temperature,
-        "stream":      False,
-    }
-    r = httpx.post(LM_STUDIO_URL, json=payload, timeout=60)
-    r.raise_for_status()
-    raw = r.json()["choices"][0]["message"]["content"]
-    return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-
-
-def _extract_images(text: str) -> list[str]:
-    pattern = re.compile(
-        r'https?://[^\s\'"<>]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s\'"<>]*)?',
-        re.IGNORECASE,
-    )
-    skip = re.compile(
-        r'(icon|logo|favicon|pixel|tracker|1x1|badge|avatar|thumb/\d{1,2}x)',
-        re.IGNORECASE,
-    )
-    seen, out = set(), []
-    for url in pattern.findall(text):
-        if skip.search(url) or url in seen:
-            continue
-        seen.add(url)
-        out.append(url)
-        if len(out) >= 3:
-            break
-    return out
-
 
 # ── Base tool ──────────────────────────────────────────────────────────────────
 class Tool:
@@ -109,7 +42,7 @@ class WebSearchTool(Tool):
     def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         ctx               = context or {}
         original_question = ctx.get("original_question", input_text)
-        user_context      = _load_user_context()
+        user_context      = load_user_context()
 
         search_history: list[dict] = []
         all_images:     list[str]  = []
@@ -124,7 +57,7 @@ class WebSearchTool(Tool):
                 result = ""
 
             if result:
-                for img in _extract_images(result):
+                for img in extract_images(result):
                     if img not in all_images:
                         all_images.append(img)
 
@@ -156,7 +89,7 @@ Reply with exactly one of:
   DONE
   NEXT_QUERY: <query>"""
 
-        raw = _llm([
+        raw = llm([
             {"role": "system", "content": "You are a research sub-agent. Be concise. Follow the reply format exactly."},
             {"role": "user",   "content": user},
         ])
@@ -175,7 +108,7 @@ Reply with exactly one of:
             for i, h in enumerate(search_history)
         )
         ctx_line = f"\nUser context: {user_context}" if user_context else ""
-        return _llm([
+        return llm([
             {"role": "system", "content": "You are Sentinel. Plain text only. No markdown, no bullet points, no asterisks. Concise spoken style. 3-5 sentences max."},
             {"role": "user",   "content": f'Answer: "{original_question}"{ctx_line}\n\nResults:\n{results_block}\n\nBe specific. No filler.'},
         ])

@@ -17,7 +17,7 @@ import httpx
 from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 from memory_persistent import load_memory
 from memory_analyzer import analyze_and_store_memory
-from tools import run_tool_by_name, ToolResult
+from tools.tools import run_tool_by_name, ToolResult
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 
