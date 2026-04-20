@@ -1,6 +1,6 @@
 import re
 import httpx
-from config import MODEL_NAME
+from system.config import MODEL_NAME
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 

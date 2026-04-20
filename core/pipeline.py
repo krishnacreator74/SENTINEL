@@ -2,8 +2,8 @@
 # This file defines the SentinelPipeline class, which encapsulates the process of handling user input, generating AI responses, and updating memory.
 # The pipeline is designed to be modular and reusable across different interfaces (e.g., voice, chat).
 
-from ai import build_system_prompt, run_memory_async
-from router import _add_close_hud_command, fast_route
+from core.ai import build_system_prompt, run_memory_async
+from system.router import _add_close_hud_command, fast_route
 
 def _dedup_roles(messages: list) -> list:
     fixed, last_role = [], None

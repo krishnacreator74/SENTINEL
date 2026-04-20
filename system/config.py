@@ -16,8 +16,9 @@ _MODEL_PROFILES = {
 
 _PREFERRED_ORDER = [
     
-    "qwen/qwen3.5-9b",
     "qwen/qwen3-1.7b",
+    "qwen/qwen3.5-9b",
+  
     
 ]
 

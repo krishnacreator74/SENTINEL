@@ -187,3 +187,5 @@ diagnoistic.py
 user_memory.json
 known_apps.json
 *.json
+/TRAIN AND TESTING
+/NEW_FEATURE_TESTING

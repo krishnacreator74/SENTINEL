@@ -14,7 +14,7 @@ import time
 import threading
 import httpx
 
-from config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
+from system.config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 from memory.memory_persistent import load_memory
 from memory.memory_analyzer import analyze_and_store_memory
 from tools.tools import run_tool_by_name, ToolResult

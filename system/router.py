@@ -8,7 +8,7 @@ Two responsibilities:
 """
 
 import re
-from commands import launch_app_from_command
+from system.commands import launch_app_from_command
 
 # ── App routing tables ────────────────────────────────────────────────────────
 OPEN_TRIGGERS = {"open", "launch", "start", "run", "load"}

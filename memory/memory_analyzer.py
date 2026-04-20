@@ -2,7 +2,7 @@ import json
 import re
 import httpx
 from memory.memory_persistent import update_memory
-from config import MODEL_NAME
+from system.config import MODEL_NAME
 import sys, os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 

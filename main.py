@@ -13,10 +13,10 @@ from voice import voice
 from voice.ears import listen
 from voice.wake import wait_for_wake
 from memory.memory_chat import ChatMemory
-from ai import SentinelAI
-from widget import SentinelWidget
-from menu import SentinelMenu
-from hud import HUD
+from core.ai import SentinelAI
+from ui.widget import SentinelWidget
+from ui.menu import SentinelMenu
+from ui.hud import HUD
 from chat.window import ChatWindow
 
 widget_ref   = [None]

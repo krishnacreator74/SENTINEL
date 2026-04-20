@@ -176,8 +176,8 @@ class ChatWindow(QWidget):
         threading.Thread(target=self._run_ai, args=(text,), daemon=True).start()
 
     def _run_ai(self, user_text: str):
-        from ai import build_system_prompt, run_memory_async
-        from router import fast_route
+        from core.ai import build_system_prompt, run_memory_async
+        from system.router import fast_route
 
         if fast_route(user_text):
             import time

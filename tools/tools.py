@@ -17,7 +17,7 @@ import httpx
 from typing import NamedTuple
 from tools.context_helpers import load_user_context
 from tools.web_search import search_and_extract
-from config import MODEL_NAME
+from system.config import MODEL_NAME
 from tools.helpers import llm, extract_images
 class ToolResult(NamedTuple):
     text: str
@@ -121,7 +121,7 @@ class OpenAppTool(Tool):
     def run(self, input_text: str, context: dict | None = None) -> ToolResult:
         # Delegates to your existing launcher logic
         try:
-            from commands import launch_app_from_command
+            from system.commands import launch_app_from_command
             launch_app_from_command(f"open {input_text}")
             return ToolResult(text=f"Opened {input_text}.", images=[])
         except Exception as e:
