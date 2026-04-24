@@ -9,6 +9,10 @@ States per sentence:
 
 No word-level tracking, no cursor manipulation.
 Voice just calls begin_sentence(idx) / end_sentence(idx).
+
+Fix: show_hud() called during load now shows immediately at full opacity.
+     A fade-in is used only when the window was fully hidden (opacity == 0).
+     begin_sentence() never restarts a fade — it just ensures visibility.
 """
 
 import os, sys, time, threading, urllib.request, re
@@ -33,13 +37,12 @@ C_BG_BOT    = QColor(4,   6,   10,  255)
 C_BORDER    = QColor(255, 255, 255, 22)
 C_CLOSE_HOV = QColor(255, 75,  75,  200)
 
-# Sentence colours
-C_FUTURE    = QColor(220, 235, 255, 55)      # dim
-C_ACTIVE_BG = QColor(82,  183, 255, 55)      # blue tint — punchy enough on dark bg
-C_ACTIVE_BD = QColor(82,  183, 255, 160)     # blue border — clearly visible
-C_ACTIVE_TX = QColor(180, 225, 255, 255)     # bright blue-white text
-C_ACTIVE_BAR= QColor(82,  183, 255, 255)     # left accent bar
-C_PAST      = QColor(220, 235, 255, 235)     # spoken — solid white-blue
+C_FUTURE    = QColor(220, 235, 255, 55)
+C_ACTIVE_BG = QColor(82,  183, 255, 55)
+C_ACTIVE_BD = QColor(82,  183, 255, 160)
+C_ACTIVE_TX = QColor(180, 225, 255, 255)
+C_ACTIVE_BAR= QColor(82,  183, 255, 255)
+C_PAST      = QColor(220, 235, 255, 235)
 
 CORNER_R        = 16
 HEADER_H        = 44
@@ -54,10 +57,10 @@ STATE_PAST    = 2
 
 # ── Signal bridge ──────────────────────────────────────────────────────────────
 class HUDSignals(QObject):
-    load_sentences  = pyqtSignal(list)    # list[str] — full response sentences
-    begin_sentence  = pyqtSignal(int)     # idx — mark active
-    end_sentence    = pyqtSignal(int)     # idx — mark past
-    finish_all      = pyqtSignal()        # mark everything past (safety)
+    load_sentences  = pyqtSignal(list)
+    begin_sentence  = pyqtSignal(int)
+    end_sentence    = pyqtSignal(int)
+    finish_all      = pyqtSignal()
     show_image      = pyqtSignal(str)
     pixmap_ready    = pyqtSignal(QPixmap)
     clear           = pyqtSignal()
@@ -101,19 +104,10 @@ class GlassPane(QWidget):
 
 # ── Single sentence widget ────────────────────────────────────────────────────
 class SentenceBlock(QWidget):
-    """
-    One sentence/block displayed as a rounded card that transitions between
-    FUTURE / ACTIVE / PAST states.
-
-    Numbered items (e.g. "1. Phone news: ...") render with a number badge.
-    Heading-like lines (ending with ":") render slightly smaller and dimmer.
-    """
-
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
         self._state = STATE_FUTURE
 
-        # Detect block type
         m = re.match(r"^(\d+)\.\s+(.*)", text, re.DOTALL)
         self._is_numbered = m is not None
         self._is_heading  = (not m) and text.endswith(":") and len(text) < 80
@@ -150,7 +144,6 @@ class SentenceBlock(QWidget):
 
     def _apply_state(self):
         if self._is_heading:
-            # Headings: always a bit smaller, never glow blue
             colours = {
                 STATE_FUTURE: "rgba(82,183,255,120)",
                 STATE_ACTIVE: "rgba(82,183,255,220)",
@@ -247,11 +240,6 @@ class ThinDivider(QWidget):
 # ── Main HUD window ────────────────────────────────────────────────────────────
 class SentinelHUD(QWidget):
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton and e.position().y() < HEADER_H:
-            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
-        # Also allow resize from bottom-right corner outside the grip widget
-
     def __init__(self):
         super().__init__()
         self.signals           = HUDSignals()
@@ -259,6 +247,7 @@ class SentinelHUD(QWidget):
         self._anim             = None
         self._blocks: list[SentenceBlock] = []
         self._user_scrolled_up = False
+        self._is_speaking      = False   # True while sentences are being spoken
         self._setup_window()
         self._build_ui()
         self._connect_signals()
@@ -320,7 +309,7 @@ class SentinelHUD(QWidget):
         self.cl = QVBoxLayout(self.content_w)
         self.cl.setContentsMargins(10, 10, 10, 14)
         self.cl.setSpacing(4)
-        self.cl.addStretch()   # pushes sentences to top
+        self.cl.addStretch()
 
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.content_w)
@@ -364,7 +353,6 @@ class SentinelHUD(QWidget):
         self.signals.set_title.connect(self._on_title)
 
     def _scroll_to_active(self, idx: int):
-        """Scroll the active sentence into view — only if user hasn't scrolled up manually."""
         if self._user_scrolled_up:
             return
         if 0 <= idx < len(self._blocks):
@@ -372,7 +360,6 @@ class SentinelHUD(QWidget):
             QTimer.singleShot(40, lambda: self.scroll.ensureWidgetVisible(block, 0, 20))
 
     def _on_user_scroll(self, value: int):
-        """Detect if user scrolled away from bottom so we stop auto-scrolling."""
         sb = self.scroll.verticalScrollBar()
         at_bottom = (sb.maximum() - value) <= 60
         if at_bottom:
@@ -383,25 +370,30 @@ class SentinelHUD(QWidget):
     # ── Slots ─────────────────────────────────────────────────────────────────
     @pyqtSlot(list)
     def _on_load_sentences(self, sentences: list):
-        # Cancel any pending auto-close from previous response
+        # Cancel any pending auto-close
         if self._auto_close_timer is not None:
             self._auto_close_timer.stop()
             self._auto_close_timer = None
+
         self._clear_content()
         self._user_scrolled_up = False
+        self._is_speaking      = True
+
         for text in sentences:
             block = SentenceBlock(text)
             self._blocks.append(block)
             self.cl.insertWidget(self.cl.count() - 1, block)
-        if not self.isVisible():
-            self.show_hud()
+
+        # Show immediately at full opacity — no fade-in while content is loading
+        self._show_immediate()
 
     @pyqtSlot(int)
     def _on_begin_sentence(self, idx: int):
         if 0 <= idx < len(self._blocks):
             self._blocks[idx].set_state(STATE_ACTIVE)
+            # Ensure visible without re-triggering a fade-in animation
             if not self.isVisible():
-                self.show_hud()
+                self._show_immediate()
             self._scroll_to_active(idx)
 
     @pyqtSlot(int)
@@ -411,12 +403,13 @@ class SentinelHUD(QWidget):
 
     @pyqtSlot()
     def _on_finish_all(self):
+        self._is_speaking = False
         for b in self._blocks:
             b.set_state(STATE_PAST)
         self._auto_close_timer = QTimer()
         self._auto_close_timer.setSingleShot(True)
         self._auto_close_timer.timeout.connect(self.hide_hud)
-        self._auto_close_timer.start(10000)
+        self._auto_close_timer.start(10_000)
 
     @pyqtSlot(str)
     def _on_image(self, src: str):
@@ -462,32 +455,58 @@ class SentinelHUD(QWidget):
 
     def _clear_content(self):
         self._blocks = []
-        while self.cl.count() > 1:          # keep the trailing stretch
+        while self.cl.count() > 1:
             item = self.cl.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         self.scroll.verticalScrollBar().setValue(0)
 
-    # ── Window animation ───────────────────────────────────────────────────────
+    # ── Window visibility ──────────────────────────────────────────────────────
+    def _show_immediate(self):
+        """Show at full opacity instantly — used during active speech."""
+        # Stop any running hide/fade animation so it doesn't clobber opacity
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        self.setWindowOpacity(1.0)
+        self.show()
+        self.raise_()
+
     def show_hud(self):
-        self.setWindowOpacity(0.0); self.show(); self.raise_()
+        """Gentle fade-in — used only when HUD appears while NOT actively speaking."""
+        if self._is_speaking:
+            self._show_immediate()
+            return
+        if self._anim is not None:
+            self._anim.stop()
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
         a = QPropertyAnimation(self, b"windowOpacity", self)
-        a.setDuration(300); a.setStartValue(0.0); a.setEndValue(1.0)
-        a.setEasingCurve(QEasingCurve.Type.OutCubic); a.start(); self._anim = a
+        a.setDuration(300)
+        a.setStartValue(0.0)
+        a.setEndValue(1.0)
+        a.setEasingCurve(QEasingCurve.Type.OutCubic)
+        a.start()
+        self._anim = a
+
+    def hide_hud(self):
+        if self._anim is not None:
+            self._anim.stop()
+        a = QPropertyAnimation(self, b"windowOpacity", self)
+        a.setDuration(200)
+        a.setStartValue(self.windowOpacity())
+        a.setEndValue(0.0)
+        a.setEasingCurve(QEasingCurve.Type.InCubic)
+        a.finished.connect(self.hide)
+        a.finished.connect(self._clear_content)
+        a.start()
+        self._anim = a
 
     def _on_close_clicked(self): os._exit(0)
 
-    def hide_hud(self):
-        a = QPropertyAnimation(self, b"windowOpacity", self)
-        a.setDuration(200)
-        a.setStartValue(self.windowOpacity()); a.setEndValue(0.0)
-        a.setEasingCurve(QEasingCurve.Type.InCubic)
-        # Clear content AFTER hide animation finishes
-        a.finished.connect(self.hide)
-        a.finished.connect(self._clear_content)  # ← add this line
-        a.start(); self._anim = a
-
     def resizeEvent(self, e):
-        super().resizeEvent(e); self.glass.setGeometry(self.rect())
+        super().resizeEvent(e)
+        self.glass.setGeometry(self.rect())
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and e.position().y() < HEADER_H:
@@ -511,20 +530,16 @@ class HUD:
         self._win.close_btn.clicked.connect(self._win.hide_hud)
 
     def load_sentences(self, sentences: list[str], title: str = "SENTINEL"):
-        """Call once per AI response with the full list of sentences."""
         self._win.signals.set_title.emit(title)
         self._win.signals.load_sentences.emit(sentences)
 
     def begin_sentence(self, idx: int):
-        """Call just before Piper starts speaking sentence idx."""
         self._win.signals.begin_sentence.emit(idx)
 
     def end_sentence(self, idx: int):
-        """Call just after sd.wait() returns for sentence idx."""
         self._win.signals.end_sentence.emit(idx)
 
     def finish_all(self):
-        """Safety: mark all sentences as past."""
         self._win.signals.finish_all.emit()
 
     def append_image(self, src: str):

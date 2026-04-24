@@ -9,6 +9,12 @@ States:
   idle      → dim, organic breath, slow colour drift
   listening → brightens over ~400ms, steady pulse
   speaking  → energy-reactive, wakes up/cools smoothly
+
+Fix: decay variable no longer overrides spd with LERP_SLOW when
+     transitioning from bright → idle.  That was causing the widget
+     to ignore incoming energy for several seconds after a state change.
+     Now LERP_SLOW is only used for the idle → idle self-sustaining
+     breath fade, never when energy signals are actively arriving.
 """
 
 import math
@@ -74,7 +80,7 @@ FRAME_MS       = 16
 CLICK_COOLDOWN = 0.8
 
 # ── Lerp speeds ───────────────────────────────────────────────────────────────
-LERP_FAST   = 0.08
+LERP_FAST   = 0.35
 LERP_MEDIUM = 0.05
 LERP_SLOW   = 0.025
 
@@ -282,10 +288,16 @@ class SentinelWidget(QWindow):
         self._drift_phase += dt * 0.12
 
         s = self.state
-        e_target       = self.energy if s == "speaking" else 0.0
-        self._smooth_e = _lerp(self._smooth_e, e_target, LERP_FAST)
+
+        # ── Smooth energy (only used in speaking state) ───────────────────────
+        if s == "speaking":
+            e_target      = self.energy * 1.5
+            self._smooth_e = _lerp(self._smooth_e, e_target, 0.5)   # fast attack
+        else:
+            self._smooth_e = _lerp(self._smooth_e, 0.0,     0.08)   # calm release
         e = self._smooth_e
 
+        # ── Per-state targets ─────────────────────────────────────────────────
         if s == "idle":
             b     = _noise_breath(self._phase * 0.7)
             drift = math.sin(self._drift_phase) * 0.5 + 0.5
@@ -326,7 +338,7 @@ class SentinelWidget(QWindow):
             t_squish = 0.0
             spd      = LERP_FAST
 
-        # Squish spring
+        # ── Squish spring ─────────────────────────────────────────────────────
         spring_k = 18.0
         damping  = 6.5
         err      = self._d_squish - t_squish
@@ -334,11 +346,13 @@ class SentinelWidget(QWindow):
         self._d_squish   += self._squish_vel * dt
         self._d_squish    = _clamp(self._d_squish, -0.06, 0.10)
 
-        decay = LERP_SLOW if (s == "idle" and self._d_core_a > 80) else spd
-
-        self._d_core_a  = _lerp(self._d_core_a,  t_core_a,  decay)
-        self._d_glow_a  = _lerp(self._d_glow_a,  t_glow_a,  decay)
-        self._d_inner_a = _lerp(self._d_inner_a, t_inner_a, decay)
+        # ── Lerp all display params at the same speed ─────────────────────────
+        # NOTE: removed the special-case LERP_SLOW override that was
+        #       suppressing energy changes when _d_core_a was above 80.
+        #       All params now track at `spd` determined by state alone.
+        self._d_core_a  = _lerp(self._d_core_a,  t_core_a,  spd)
+        self._d_glow_a  = _lerp(self._d_glow_a,  t_glow_a,  spd)
+        self._d_inner_a = _lerp(self._d_inner_a, t_inner_a, spd)
         self._d_r_halo  = _lerp(self._d_r_halo,  t_r_halo,  spd)
         self._d_ring_w  = _lerp(self._d_ring_w,  t_ring_w,  spd)
         self._d_col_r   = _lerp(self._d_col_r,   t_r,       spd)
@@ -391,6 +405,14 @@ class SentinelWidget(QWindow):
 
     def run(self):
         QApplication.instance().exec()
+
+    def set_state(self, state: str):
+        if state == "idle":
+            self.set_idle()
+        elif state == "listening":
+            self.set_listening()
+        elif state == "speaking":
+            self.set_speaking()
 
 
 # ── Standalone demo ───────────────────────────────────────────────────────────

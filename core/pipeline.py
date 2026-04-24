@@ -1,9 +1,13 @@
-# SentinelPipeline: A Modular AI Interaction Pipeline
-# This file defines the SentinelPipeline class, which encapsulates the process of handling user input, generating AI responses, and updating memory.
-# The pipeline is designed to be modular and reusable across different interfaces (e.g., voice, chat).
+"""
+pipeline.py — SentinelPipeline
+
+Fix: bridge is now passed through to ai.respond() and _speak() so all
+     HUD calls go through Qt signals instead of direct cross-thread calls.
+"""
 
 from core.ai import build_system_prompt, run_memory_async
 from system.router import _add_close_hud_command, fast_route
+
 
 def _dedup_roles(messages: list) -> list:
     fixed, last_role = [], None
@@ -17,19 +21,18 @@ def _dedup_roles(messages: list) -> list:
 
 class SentinelPipeline:
     def __init__(self, ai, memory):
-        self.ai = ai
+        self.ai     = ai
         self.memory = memory
 
-    def process(self, req: str, hud=None, speak_fn=None):
-        
-        #Hud 
+    def process(self, req: str, hud=None, speak_fn=None, bridge=None):
+        # HUD close command
         if _add_close_hud_command(req, hud):
             return "__handled__"
 
-        # Fast route
+        # Fast route (built-in commands)
         if fast_route(req):
             return "__handled__"
-        
+
         # Add user message
         if not self.memory.messages or self.memory.messages[-1]["role"] != "user":
             self.memory.add_user(req)
@@ -40,11 +43,12 @@ class SentinelPipeline:
             + self.memory.get_messages()
         )
 
-        # Call AI
+        # Call AI — pass bridge so HUD signals are thread-safe
         result = self.ai.respond(
             messages,
             on_sentence=speak_fn,
             hud=hud,
+            bridge=bridge,
         )
 
         if not result:
@@ -56,7 +60,6 @@ class SentinelPipeline:
         if not full_response:
             return None
 
-        # Memory update
         run_memory_async(parsed_json)
         self.memory.add_assistant(full_response)
 

@@ -3,21 +3,21 @@ voice.py — Sentinel TTS
 
 One job: synthesize a sentence with Piper, play it, keep HUD in sync.
 
-HUD contract (sentence-glow model):
-  hud.begin_sentence(idx)  — called BEFORE sd.play  (sentence lights up)
-  hud.end_sentence(idx)    — called AFTER  sd.wait  (sentence goes white)
+ALL Qt interactions go through `bridge` signals — never direct cross-thread calls.
 
-No word indices. No timing guesses. No cross-module state.
+HUD contract (sentence-glow model):
+  hud_begin_signal(idx)  — called BEFORE sd.play  (sentence lights up)
+  hud_end_signal(idx)    — called AFTER  sd.wait  (sentence goes white)
 """
 
 from piper import PiperVoice
 import sounddevice as sd
 import numpy as np
-import threading
-import re
 
-widget = None
-hud    = None   # set by main.py
+# Set by main.py after UIBridge is created
+bridge = None
+
+_last_energy = 0.0
 
 voice = PiperVoice.load(
     model_path="voice_models/en_US-hfc_female-medium.onnx",
@@ -27,6 +27,7 @@ voice = PiperVoice.load(
 # Current sentence index — set by ai.py before each voice_of_ai call
 _current_sentence_idx: int = -1
 
+
 def set_sentence_idx(idx: int):
     """ai.py calls this before each sentence so voice.py can sync the HUD."""
     global _current_sentence_idx
@@ -34,32 +35,48 @@ def set_sentence_idx(idx: int):
 
 
 def voice_of_ai(text: str):
-    """Synthesize and play one sentence. Drives HUD begin/end around playback."""
-    global _current_sentence_idx
+    global _current_sentence_idx, _last_energy
 
-    if widget:
-        widget.set_speaking()
-
-    chunks = list(voice.synthesize(text))
-    if not chunks:
-        if widget:
-            widget.set_idle()
-        return
-
-    audio = np.concatenate([c.audio_float_array for c in chunks])
-    sample_rate = chunks[0].sample_rate
     idx = _current_sentence_idx
 
-    # Tell HUD this sentence is active — BEFORE playback starts
-    if hud and idx >= 0:
-        hud.begin_sentence(idx)
+    if bridge:
+        bridge.state_signal.emit("speaking")
+        bridge.energy_signal.emit(0.25)
 
-    sd.play(audio, sample_rate)
-    sd.wait()
+    first_chunk = True
 
-    # Tell HUD this sentence is done — AFTER audio finishes
-    if hud and idx >= 0:
-        hud.end_sentence(idx)
+    for chunk in voice.synthesize(text):
+        audio       = chunk.audio_float_array
+        sample_rate = chunk.sample_rate
 
-    if widget:
-        widget.set_idle()
+        # Signal HUD on the very first chunk (audio is about to start)
+        if first_chunk:
+            if bridge and idx >= 0:
+                bridge.hud_begin_signal.emit(idx)
+            first_chunk = False
+
+        # ── Energy calculation ────────────────────────────────────────────────
+        peak       = float(np.max(np.abs(audio)))
+        rms        = float(np.sqrt(np.mean(audio ** 2)))
+        raw_energy = (0.6 * peak + 0.4 * rms)
+        raw_energy = raw_energy ** 0.4
+        raw_energy = min(1.0, raw_energy * 20)
+
+        # Two-pole smoothing: lag + transient boost
+        smoothed       = 0.5 * _last_energy + 0.5 * raw_energy
+        smoothed      += (raw_energy - _last_energy) * 0.2
+        smoothed       = max(0.0, min(1.0, smoothed))
+        _last_energy   = smoothed
+
+        if bridge:
+            bridge.energy_signal.emit(smoothed)
+
+        sd.play(audio, sample_rate, blocking=True)
+
+    # Sentence finished
+    if bridge and idx >= 0:
+        bridge.hud_end_signal.emit(idx)
+
+    if bridge:
+        bridge.energy_signal.emit(0.0)
+        bridge.state_signal.emit("idle")
