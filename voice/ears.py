@@ -10,18 +10,48 @@ HALLUCINATIONS = {
     "see you next time", "bye", "goodbye", ".",
 }
 
-def pick_device():
+import threading
+
+def input_with_timeout(prompt, timeout=5):
+    user_input = [None]
+
+    def get_input():
+        try:
+            user_input[0] = input(prompt)
+        except:
+            pass
+
+    t = threading.Thread(target=get_input, daemon=True)
+    t.start()
+    t.join(timeout)
+
+    return user_input[0]
+
+
+def pick_device(timeout=5):
     devices = sd.query_devices()
+
     print("\n=== Available Input Devices ===")
+    valid_indices = []
     for i, d in enumerate(devices):
         if d['max_input_channels'] > 0:
             print(f"  [{i}] {d['name']}")
-    default_idx = sd.default.device[0]
-    print(f"================================")
-    print(f"Default: [{default_idx}] {devices[default_idx]['name']}")
-    choice = input("Enter device number (or Enter for default): ").strip()
-    return int(choice) if choice else None
+            valid_indices.append(i)
 
+    default_idx = sd.default.device[0]
+    print("================================")
+    print(f"Default: [{default_idx}] {devices[default_idx]['name']}")
+
+    choice = input_with_timeout(
+        f"Enter device number (auto-select in {timeout}s): ",
+        timeout
+    )
+
+    if choice and choice.strip().isdigit():
+        return int(choice.strip())
+
+    print(f"\n[Auto] Using default device: {devices[default_idx]['name']}")
+    return None
 _DEVICE = pick_device()
 
 _SPEECH_THRESH  = 0.001

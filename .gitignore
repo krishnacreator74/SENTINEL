@@ -188,4 +188,7 @@ user_memory.json
 known_apps.json
 *.json
 /TRAIN AND TESTING
-/NEW_FEATURE_TESTING
+/modules/note_taker
+/modules/temp
+/modules
+/sentinel_notes
