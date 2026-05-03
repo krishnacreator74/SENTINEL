@@ -1,3 +1,16 @@
+"""
+wake.py — Wake word detection loop
+This module implements the wake word detection loop using a pre-trained model. It continuously listens to the microphone input, processes audio chunks, and predicts the probability of the wake word being spoken. When the wake word is detected with sufficient confidence, it triggers the voice processing loop in the main application.
+
+Key components:
+- wait_for_wake: The main function that listens for audio input, processes it in chunks, and uses a machine learning model to predict the presence of the wake word. It includes a calibration step to set the silence threshold and handles cooldown periods to prevent multiple triggers in quick succession.
+
+Key functions:
+- predict: Takes an audio chunk, extracts features using the AudioFeatures class, and uses a pre-trained classifier to predict the probability of the wake word being present.
+
+"""
+
+
 from openwakeword.utils import AudioFeatures
 import sounddevice as sd
 import numpy as np

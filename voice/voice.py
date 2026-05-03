@@ -9,12 +9,9 @@ HUD contract (sentence-glow model):
   hud_begin_signal(idx)  — called BEFORE sd.play  (sentence lights up)
   hud_end_signal(idx)    — called AFTER  sd.wait  (sentence goes white)
 """
-
 from piper import PiperVoice
 import sounddevice as sd
 import numpy as np
-
-# Set by main.py after UIBridge is created
 bridge = None
 
 _last_energy = 0.0
@@ -34,14 +31,14 @@ def set_sentence_idx(idx: int):
     _current_sentence_idx = idx
 
 
-def voice_of_ai(text: str):
+def voice_of_ai(text: str, emitter,bridge=None):
     global _current_sentence_idx, _last_energy
 
     idx = _current_sentence_idx
 
-    if bridge:
-        bridge.state_signal.emit("speaking")
-        bridge.energy_signal.emit(0.25)
+
+    emitter.emit("state", "speaking")
+    emitter.emit("energy", 0.25)
 
     first_chunk = True
 
@@ -68,15 +65,15 @@ def voice_of_ai(text: str):
         smoothed       = max(0.0, min(1.0, smoothed))
         _last_energy   = smoothed
 
-        if bridge:
-            bridge.energy_signal.emit(smoothed)
+        
+        emitter.emit("energy", smoothed)
 
         sd.play(audio, sample_rate, blocking=True)
 
     # Sentence finished
-    if bridge and idx >= 0:
+    if idx >= 0:
         bridge.hud_end_signal.emit(idx)
 
-    if bridge:
-        bridge.energy_signal.emit(0.0)
-        bridge.state_signal.emit("idle")
+
+    emitter.emit("energy", 0.0)
+    emitter.emit("state", "idle")

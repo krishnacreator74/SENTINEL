@@ -1,8 +1,14 @@
 """
 pipeline.py — SentinelPipeline
+This module defines the SentinelPipeline class, which serves as the core processing unit for handling user requests, interacting with the AI model,
+and managing the conversation history.The pipeline takes user input, constructs the appropriate message format for the AI,
+and processes the AI's response to update the conversation memory and generate output for the UI.
 
-Fix: bridge is now passed through to ai.respond() and _speak() so all
-     HUD calls go through Qt signals instead of direct cross-thread calls.
+Key components:
+- SentinelPipeline: The main class that orchestrates the processing of user requests, interaction with the AI, and memory management.
+
+Key functions:
+- process: Takes a user request, checks for built-in commands, updates the conversation history, and calls the AI to generate a response. It also handles the integration with the HUD and UI bridge for thread-safe operations.
 """
 
 from core.ai import build_system_prompt, run_memory_async
@@ -24,13 +30,13 @@ class SentinelPipeline:
         self.ai     = ai
         self.memory = memory
 
-    def process(self, req: str, hud=None, speak_fn=None, bridge=None):
+    def process(self, req: str, speak_fn=None, bridge=None, emitter=None):
         # HUD close command
-        if _add_close_hud_command(req, hud):
+        if _add_close_hud_command(req, emitter):
             return "__handled__"
-
+        
         # Fast route (built-in commands)
-        if fast_route(req):
+        if fast_route(req,emitter):
             return "__handled__"
 
         # Add user message
@@ -47,7 +53,6 @@ class SentinelPipeline:
         result = self.ai.respond(
             messages,
             on_sentence=speak_fn,
-            hud=hud,
             bridge=bridge,
         )
 

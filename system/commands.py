@@ -1,4 +1,17 @@
-# commands.py
+""" Commands.py
+
+This module defines the command routing logic for Sentinel, allowing it to interpret and execute built-in commands without needing to involve the AI.
+It includes functionality to launch applications based on voice commands, as well as handle system-level commands like shutdown, restart, sleep, and lock. 
+The module also maintains a dictionary of known applications for faster access and can scan common directories to find executables when a command is issued.
+
+Key components:
+- launch_app_from_command: The main function that takes a command string, parses it,
+and executes the appropriate action (launching an app or performing a system command). 
+It also provides feedback through voice responses and updates the known applications dictionary for future use.
+
+
+"""
+
 from voice.voice import voice_of_ai
 import subprocess
 import os
@@ -148,7 +161,7 @@ if __name__ == "__main__":
 #COMMAND: open_chrome
 
 
-def launch_app_from_command(command):
+def launch_app_from_command(command, emitter):
 
     command = command.replace("COMMAND:", "").strip().lower()
 
@@ -168,27 +181,27 @@ def launch_app_from_command(command):
     app_name = " ".join(parts[1:])
 
     if action == "open" or action == "launch" or action == "start":
-        voice_of_ai(f"Opening {app_name}")
+        voice_of_ai(f"Opening {app_name}", emitter)
         print(f"🔍 Launching: {app_name}")
         return find_and_open_app(app_name)
 
     if action == "shutdown":
-        voice_of_ai("Shutting down the system")
+        voice_of_ai("Shutting down the system", emitter)
         subprocess.run(["shutdown", "/s", "/t", "5"])
         return True
 
     if action == "restart":
-        voice_of_ai("Restarting the system")
+        voice_of_ai("Restarting the system", emitter)
         subprocess.run(["shutdown", "/r", "/t", "5"])
         return True
 
     if action == "sleep":
-        voice_of_ai("Putting the system to sleep")
+        voice_of_ai("Putting the system to sleep", emitter)
         subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
         return True
 
     if action == "lock":
-        voice_of_ai("Locking the computer")
+        voice_of_ai("Locking the computer", emitter)
         subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
         return True
 

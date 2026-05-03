@@ -56,17 +56,18 @@ def _clean(text: str) -> str:
     return text
 
 # ── App / system command routing (no LLM) ────────────────────────────────────
-def _add_close_hud_command(req: str, hud) -> bool:
+def _add_close_hud_command(req: str, emitter=None) -> bool:
     """Returns True if command was handled."""
     triggers = ["close window", "close hud", "close panel",
                 "hide window", "hide display", "close display"]
+    
     if any(t in req for t in triggers):
-        if hud:
-            hud.close()
+        emitter.emit("hud_close")
         return True
+    
     return False
 
-def fast_route(text: str) -> bool:
+def fast_route(text: str, emitter=None) -> bool:
     """
     Handle app launches and system commands instantly with pure logic.
     Returns True if the command was handled (main loop should skip LLM).
@@ -83,7 +84,7 @@ def fast_route(text: str) -> bool:
     for keyword, command in SYSTEM_COMMANDS.items():
         if keyword in word_set:
             print(f"[Router] System command: {command}")
-            launch_app_from_command(command)
+            launch_app_from_command(command, emitter)
             return True
 
     # Disqualify question/info requests
@@ -94,7 +95,7 @@ def fast_route(text: str) -> bool:
     for fused, app in APP_ALIASES.items():
         if fused in words:
             print(f"[Router] Fused alias: {app}")
-            launch_app_from_command(f"open {app}")
+            launch_app_from_command(f"open {app}", emitter)
             return True
 
     # Trigger word must be in first 4 words
@@ -106,7 +107,7 @@ def fast_route(text: str) -> bool:
             if 1 <= len(app_words) <= 3:
                 app = " ".join(app_words)
                 print(f"[Router] App launch: {app}")
-                launch_app_from_command(f"open {app}")
+                launch_app_from_command(f"open {app}", emitter)
                 return True
 
     return False

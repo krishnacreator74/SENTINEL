@@ -1,16 +1,14 @@
 """
 ai.py — Sentinel core, redesigned for structured JSON output.
+This module defines the SentinelAI class, which serves as the main interface to the language model. 
+It handles constructing prompts, calling the LM Studio API, parsing structured JSON responses, executing any requested tools,
+and managing HUD updates and voice delivery.
 
-Flow:
-  1. Send messages to LM Studio (JSON mode enforced via schema)
-  2. Parse the structured response — no regex fragility
-  3. Execute tools in parallel if multiple requested
-  4. Feed tool results back for final response
-  5. Stream sentences to HUD + voice
-
-Fix: All HUD calls now go through bridge signals (never direct).
-     _speak() accepts bridge and calls bridge.hud_* signals so that
-     the Qt objects are always touched from the main thread only.
+Key features:
+- Structured JSON responses: The language model is expected to return a JSON object with specific fields (response, tools, hud, awaiting_tool_result) that guide the application's behavior.
+- Tool execution: If the model requests tools, SentinelAI runs them in parallel threads and then makes a follow-up call to the model with the tool results for a final response.
+- HUD integration: The _speak function manages speaking text sentence by sentence while keeping the HUD in sync, using Qt signals to ensure thread safety.
+- Memory handling: The run_memory_async function allows for asynchronous analysis and storage of memory without blocking the main thread.
 """
 
 import json
@@ -116,7 +114,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 # ── HUD + voice delivery ───────────────────────────────────────────────────────
-def _speak(text: str, on_sentence, hud=None, bridge=None,
+def _speak(text: str, on_sentence, bridge=None, emitter=None,
            use_hud: bool = False, title: str = "SENTINEL"):
     """
     Speaks `text` sentence by sentence, keeping HUD in sync.
@@ -132,8 +130,6 @@ def _speak(text: str, on_sentence, hud=None, bridge=None,
     if not on_sentence:
         if bridge and use_hud:
             bridge.hud_finish_signal.emit()
-        elif hud and use_hud:
-            hud.finish_all()
         return
 
     sentences = _split_sentences(text)
@@ -144,8 +140,6 @@ def _speak(text: str, on_sentence, hud=None, bridge=None,
     if use_hud:
         if bridge:
             bridge.hud_load_signal.emit(sentences, title)
-        elif hud:
-            hud.load_sentences(sentences, title=title)
         time.sleep(0.08)   # let Qt process the load before first begin
 
     for idx, sentence in enumerate(sentences):
@@ -158,8 +152,7 @@ def _speak(text: str, on_sentence, hud=None, bridge=None,
     if use_hud:
         if bridge:
             bridge.hud_finish_signal.emit()
-        elif hud:
-            hud.finish_all()
+
 
 
 # ── Core AI class ──────────────────────────────────────────────────────────────
@@ -180,7 +173,7 @@ class SentinelAI:
     def _execute_tool(self, name: str, input_: str, original_question: str):
         return run_tool_by_name(name, input_, original_question=original_question)
 
-    def respond(self, messages: list, on_sentence=None, hud=None, bridge=None) -> dict:
+    def respond(self, messages: list, on_sentence=None, bridge=None) -> dict:
         """
         Main entry point.
 
@@ -208,7 +201,7 @@ class SentinelAI:
 
         # Speak pre-tool announcement ("Let me search that…")
         if response_text:
-            _speak(response_text, on_sentence, hud, bridge,
+            _speak(response_text, on_sentence, bridge,
                    use_hud=use_hud and not awaiting)
 
         if not tools_requested or not awaiting:
@@ -238,7 +231,7 @@ class SentinelAI:
         final_text = final_result.get("response", "")
         final_hud  = True if len(final_text) > 80 else final_result.get("hud", False)
 
-        _speak(final_text, on_sentence, hud, bridge, use_hud=final_hud, title="SENTINEL")
+        _speak(final_text, on_sentence, bridge, use_hud=final_hud, title="SENTINEL")
 
         # Inject images from search results into HUD
         all_images = []
@@ -252,8 +245,6 @@ class SentinelAI:
                 for url in all_images[:3]:
                     if bridge:
                         bridge.hud_image_signal.emit(url)
-                    elif hud:
-                        hud.append_image(url)
             threading.Thread(target=_imgs, daemon=True).start()
 
         return {"text": final_text, "raw": final_result}

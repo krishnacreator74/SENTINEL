@@ -23,3 +23,7 @@ class UIBridge(QObject):
     hud_close_signal  = pyqtSignal()
     hud_title_signal  = pyqtSignal(str)
     hud_image_signal  = pyqtSignal(str)
+    game_mode_signal  = pyqtSignal(bool)
+
+    # Chat update (request, response)
+    chat_signal = pyqtSignal(str, str)

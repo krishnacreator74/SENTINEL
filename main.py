@@ -1,15 +1,12 @@
 """
 main.py — Sentinel entry point
+This file initializes the application, sets up the main window,
+and starts the voice processing loop in a separate thread. 
+It also defines the communication bridge between the voice processing and the UI components.
 
-Key fixes:
-1. voice.bridge = bridge  (was missing — energy never reached widget)
-2. speak_signal NOT connected to voice_of_ai.
-   on_sentence calls voice.voice_of_ai() directly from the voice thread.
-   Routing it through a Qt signal caused voice_of_ai to run on the main
-   thread, which blocked processing of energy signals it was emitting,
-   so widget got no energy updates until speech finished.
-3. bridge passed to pipeline.process() → ai.respond() → _speak()
-   so all HUD calls are Qt-signal-safe.
+Key components:
+- UIBridge: Facilitates communication between the voice processing thread and the UI thread using Qt signals.
+- run_voice_loop: The main loop that listens for wake words, processes voice commands, and interacts with the AI pipeline. It uses the UIBridge to update the UI state and HUD based on voice interactions.
 """
 
 import sys
@@ -18,7 +15,7 @@ import threading
 
 from PyQt6.QtWidgets import QApplication
 from ui.bridge import UIBridge
-
+from system.emitter import Emitter 
 from voice import voice
 from voice.ears import listen
 from voice.wake import wait_for_wake
@@ -35,7 +32,8 @@ chat_win_ref = [None]
 stop_event   = threading.Event()
 
 
-def run_voice_loop(pipeline, hud, bridge):
+
+def run_voice_loop(pipeline, bridge, emitter=None):
     last_wake  = 0
     saved_gate = None
 
@@ -53,15 +51,15 @@ def run_voice_loop(pipeline, hud, bridge):
             last_wake = time.time()
 
             # "yes?" — call voice directly, we're already on the voice thread
-            bridge.state_signal.emit("speaking")
-            voice.voice_of_ai("yes?")
-            bridge.state_signal.emit("listening")
+            emitter.emit("state", "speaking")
+            voice.voice_of_ai("yes?", emitter, bridge)
+            emitter.emit("state", "listening")
 
             req = listen()
             if not req:
-                bridge.state_signal.emit("speaking")
-                voice.voice_of_ai("I didn't catch that. Please try again.")
-                bridge.state_signal.emit("idle")
+                emitter.emit("state", "speaking")
+                voice.voice_of_ai("I didn't catch that. Please try again.", emitter, bridge)
+                emitter.emit("state", "idle")
                 print("No speech detected.")
                 continue
 
@@ -72,45 +70,41 @@ def run_voice_loop(pipeline, hud, bridge):
             print("You:", req)
 
             if "game mode on" in req:
-                bridge.state_signal.emit("speaking")
-                voice.voice_of_ai("Game mode on.")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: widget_ref[0].set_game_mode(True))
-                bridge.state_signal.emit("idle")
+                emitter.emit("state", "speaking")
+                voice.voice_of_ai("Game mode on.", emitter, bridge)
+                emitter.emit("game_mode", True)
+                emitter.emit("state", "idle")
                 continue
 
             if "game mode off" in req:
-                bridge.state_signal.emit("speaking")
-                voice.voice_of_ai("I'm back.")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: widget_ref[0].set_game_mode(False))
-                bridge.state_signal.emit("idle")
+                emitter.emit("state", "speaking")
+                voice.voice_of_ai("I'm back.", emitter, bridge)
+                emitter.emit("game_mode", False)
+                emitter.emit("state", "idle")
                 continue
 
             # speak_fn: called from inside ai._speak() on this thread.
             # Calls voice_of_ai directly — NO Qt signal bounce.
             def speak_fn(text):
-                bridge.state_signal.emit("speaking")
-                voice.voice_of_ai(text)   # blocks until Piper finishes; energy flows
+                emitter.emit("state", "speaking")
+                voice.voice_of_ai(text, emitter, bridge)   # blocks until Piper finishes; energy flows
 
             full_response = pipeline.process(
                 req,
-                hud=hud,
                 speak_fn=speak_fn,
                 bridge=bridge,
+                emitter=emitter,
             )
-            bridge.state_signal.emit("idle")
+            emitter.emit("state", "idle")
 
             if full_response == "__handled__":
-                if chat_win_ref[0]:
-                    chat_win_ref[0].push_exchange(req, "Done.")
+                emitter.emit("chat_update", req, "Done.")
                 continue
 
             if not full_response:
                 continue
 
-            if chat_win_ref[0]:
-                chat_win_ref[0].push_exchange(req, full_response)
+            emitter.emit("chat_update", req, full_response)
 
             if req == "exit":
                 stop_event.set()
@@ -124,6 +118,14 @@ if __name__ == "__main__":
     app           = QApplication(sys.argv)
     shared_memory = ChatMemory()
     bridge        = UIBridge()
+    emitter = Emitter()
+
+    # ── Emitter signals → Bridge → UI ─────────────────────────────────────────
+    emitter.on("state", lambda s: bridge.state_signal.emit(s))
+    emitter.on("energy", lambda e: bridge.energy_signal.emit(e))
+    emitter.on("game_mode", lambda val: bridge.game_mode_signal.emit(val))
+    emitter.on("hud_close", lambda: bridge.hud_close_signal.emit())
+    emitter.on("chat_update", lambda req, res: bridge.chat_signal.emit(req, res))
 
     voice_ai = SentinelAI()
     chat_ai  = SentinelAI()
@@ -147,9 +149,6 @@ if __name__ == "__main__":
     menu = SentinelMenu(widget_ref=widget, chat_win_ref=chat_win)
     widget.set_menu(menu)
 
-    # ── CRITICAL: wire bridge into voice module ───────────────────────────────
-    voice.bridge = bridge
-
     # ── Widget signals ────────────────────────────────────────────────────────
     bridge.state_signal.connect(widget.set_state)
     bridge.energy_signal.connect(widget.set_energy)
@@ -169,10 +168,11 @@ if __name__ == "__main__":
     bridge.hud_close_signal.connect(hud.close)
     bridge.hud_title_signal.connect(hud.set_title)
     bridge.hud_image_signal.connect(hud.append_image)
+    bridge.chat_signal.connect(chat_win.push_exchange)
 
     threading.Thread(
         target=run_voice_loop,
-        args=(pipeline, hud, bridge),
+        args=(pipeline, bridge, emitter),
         daemon=True,
     ).start()
 
