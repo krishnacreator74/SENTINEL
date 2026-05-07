@@ -27,3 +27,6 @@ class UIBridge(QObject):
 
     # Chat update (request, response)
     chat_signal = pyqtSignal(str, str)
+
+    # App control
+    close_app_signal = pyqtSignal()

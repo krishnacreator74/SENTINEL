@@ -502,7 +502,8 @@ class SentinelHUD(QWidget):
         a.start()
         self._anim = a
 
-    def _on_close_clicked(self): os._exit(0)
+    def _on_close_clicked(self): 
+        QApplication.quit()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

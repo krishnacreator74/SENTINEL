@@ -107,6 +107,7 @@ def run_voice_loop(pipeline, bridge, emitter=None):
             emitter.emit("chat_update", req, full_response)
 
             if req == "exit":
+                emitter.emit("exit_app")
                 stop_event.set()
                 break
 
@@ -126,6 +127,7 @@ if __name__ == "__main__":
     emitter.on("game_mode", lambda val: bridge.game_mode_signal.emit(val))
     emitter.on("hud_close", lambda: bridge.hud_close_signal.emit())
     emitter.on("chat_update", lambda req, res: bridge.chat_signal.emit(req, res))
+    emitter.on("exit_app", lambda:  bridge.close_app_signal.emit())
 
     voice_ai = SentinelAI()
     chat_ai  = SentinelAI()
@@ -169,6 +171,7 @@ if __name__ == "__main__":
     bridge.hud_title_signal.connect(hud.set_title)
     bridge.hud_image_signal.connect(hud.append_image)
     bridge.chat_signal.connect(chat_win.push_exchange)
+    bridge.close_app_signal.connect(app.quit)
 
     threading.Thread(
         target=run_voice_loop,
