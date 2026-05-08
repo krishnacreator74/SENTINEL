@@ -12,6 +12,8 @@ It also provides feedback through voice responses and updates the known applicat
 
 """
 
+import logging
+
 from voice.voice import voice_of_ai
 import subprocess
 import os
@@ -69,11 +71,13 @@ def find_and_open_app(app_name_or_path):
         exe_path = KNOWN_APPS[app_name_or_path]
         if os.path.exists(exe_path):
             print(f"Found in Known Apps: {exe_path}")
+            logging.info(f"Found in Known Apps: {exe_path}")
             return subprocess.Popen([exe_path], shell=True)
     
     # 2. Check if it looks like a full path already
     if os.path.exists(app_name_or_path):
         print(f"Found direct path: {app_name_or_path}")
+        logging.info(f"Found direct path: {app_name_or_path}")
         return subprocess.Popen([app_name_or_path], shell=True)
 
     # 3. Try 'where.exe' (Windows only)
@@ -90,6 +94,7 @@ def find_and_open_app(app_name_or_path):
                 path = result.stdout.strip().split('\n')[0]
                 if os.path.exists(path):
                     print(f"Found via where.exe: {path}")
+                    logging.info(f"Found via where.exe: {path}")
                     return subprocess.Popen([path], shell=True)
         except Exception:
             pass
@@ -100,6 +105,7 @@ def find_and_open_app(app_name_or_path):
     search_name = search_name.replace(" ", "") # Remove spaces for filename matching
 
     print(f"Scanning directories for '{search_name}'...")
+    logging.info(f"Scanning directories for '{search_name}'...")
     
     for base_dir in START_DIRS:
         # Expand %USERNAME%
@@ -124,7 +130,8 @@ def find_and_open_app(app_name_or_path):
                     if os.path.isfile(full_path) and os.access(full_path, os.X_OK):
 
                         print(f"Found via scan: {full_path}")
-                                
+                        logging.info(f"[commands] Found via scan: {full_path}")\
+                    
                         # --- UPDATED LOGIC: Add to dictionary and SAVE ---
                         clean_key = os.path.basename(full_path).lower().replace(".exe", "")
                         
@@ -161,7 +168,7 @@ if __name__ == "__main__":
 #COMMAND: open_chrome
 
 
-def launch_app_from_command(command, emitter):
+def launch_app_from_command(command, emitter,bridge=None):
 
     command = command.replace("COMMAND:", "").strip().lower()
 
@@ -175,36 +182,38 @@ def launch_app_from_command(command, emitter):
 
     if len(parts) == 0:
         print("❌ Invalid command format")
+        logging.warning("Invalid command format: empty command")
         return None
 
     action = parts[0]
     app_name = " ".join(parts[1:])
 
     if action == "open" or action == "launch" or action == "start":
-        voice_of_ai(f"Opening {app_name}", emitter)
+        voice_of_ai(f"Opening {app_name}", emitter, bridge)
         print(f"🔍 Launching: {app_name}")
         return find_and_open_app(app_name)
 
     if action == "shutdown":
-        voice_of_ai("Shutting down the system", emitter)
+        voice_of_ai("Shutting down the system", emitter, bridge)
         subprocess.run(["shutdown", "/s", "/t", "5"])
         return True
 
     if action == "restart":
-        voice_of_ai("Restarting the system", emitter)
+        voice_of_ai("Restarting the system", emitter, bridge)
         subprocess.run(["shutdown", "/r", "/t", "5"])
         return True
 
     if action == "sleep":
-        voice_of_ai("Putting the system to sleep", emitter)
+        voice_of_ai("Putting the system to sleep", emitter, bridge)
         subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
         return True
 
     if action == "lock":
-        voice_of_ai("Locking the computer", emitter)
+        voice_of_ai("Locking the computer", emitter, bridge)
         subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
         return True
 
     print("❌ Unsupported command:", action)
+    logging.warning(f"Unsupported command: {action}")
     return None
     

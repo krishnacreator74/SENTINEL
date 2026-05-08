@@ -32,11 +32,11 @@ class SentinelPipeline:
 
     def process(self, req: str, speak_fn=None, bridge=None, emitter=None):
         # HUD close command
-        if _add_close_hud_command(req, emitter):
+        if _add_close_hud_command(req, emitter, bridge):
             return "__handled__"
         
         # Fast route (built-in commands)
-        if fast_route(req,emitter):
+        if fast_route(req, emitter, bridge):
             return "__handled__"
 
         # Add user message

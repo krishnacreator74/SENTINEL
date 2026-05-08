@@ -71,7 +71,7 @@ def voice_of_ai(text: str, emitter,bridge=None):
         sd.play(audio, sample_rate, blocking=True)
 
     # Sentence finished
-    if idx >= 0:
+    if bridge and idx >= 0:
         bridge.hud_end_signal.emit(idx)
 
 

@@ -12,6 +12,7 @@ Key features:
 """
 
 import json
+import logging
 import time
 import threading
 import httpx
@@ -20,6 +21,10 @@ from system.config import SYSTEM_PROMPT, MODEL_NAME, TEMPERATURE, TOP_P, TOP_K
 from memory.memory_persistent import load_memory
 from memory.memory_analyzer import analyze_and_store_memory
 from tools.tools import run_tool_by_name, ToolResult
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 
@@ -41,6 +46,7 @@ def run_memory_async(parsed_response: dict):
             analyze_and_store_memory(parsed_response)
         except Exception as e:
             print(f"[Memory] Error: {e}")
+            logging.error(f"Memory analysis error: {e}")
     threading.Thread(target=task, daemon=True).start()
 
 
@@ -67,9 +73,11 @@ def _call_lm(messages: list, max_tokens: int = 500) -> dict:
         print(f"[AI] Raw JSON: {raw[:300]}")
         return json.loads(raw)
     except json.JSONDecodeError as e:
+        logging.error(f"JSON parse error: {e} | Raw response: {raw}")
         print(f"[AI] JSON parse error: {e}")
         return {}
     except Exception as e:
+        logging.error(f"AI call error: {e}")
         print(f"[AI] Call error: {e}")
         return {}
 
@@ -166,6 +174,7 @@ class SentinelAI:
             models = [m["id"] for m in r.json().get("data", [])]
             print(f"[AI] Connected. Models: {models}")
             if MODEL_NAME not in models:
+                logging.error(f"Model '{MODEL_NAME}' not found in LM Studio. Available models: {models}")
                 print(f"[AI] WARNING: '{MODEL_NAME}' not loaded!")
         except Exception as e:
             raise RuntimeError(f"[AI] Cannot reach LM Studio: {e}")
@@ -181,6 +190,7 @@ class SentinelAI:
         `on_sentence` must call voice.voice_of_ai() directly (not via Qt signal).
         """
         print("[AI] Calling model...")
+        logging.info("[AI] Calling model...")
         result = _call_lm(messages)
 
         if not result:
@@ -193,6 +203,11 @@ class SentinelAI:
         response_text   = result.get("response", "")
         use_hud         = result.get("hud", False)
         awaiting        = result.get("awaiting_tool_result", False)
+
+        logging.info(f"[Ai] thought: {result.get('thought', '')}")
+        logging.info(f"[Ai] tools: {tools_requested}")
+        logging.info(f"[Ai] response: {response_text[:100]}")
+        logging.info(f"[Ai] hud: {use_hud} | awaiting: {awaiting}")
 
         print(f"[AI] thought: {result.get('thought', '')}")
         print(f"[AI] tools: {tools_requested}")
@@ -265,6 +280,7 @@ class SentinelAI:
             try:
                 results[idx] = self._execute_tool(name, input_, original_question)
             except Exception as e:
+                logging.error(f"Tool '{name}' error: {e}")
                 print(f"[AI] Tool '{name}' error: {e}")
                 results[idx] = ToolResult(text=f"Tool '{name}' failed: {e}", images=[])
 
@@ -283,6 +299,7 @@ class SentinelAI:
             name = tool_def.get("name", "unknown")
             text = result.text if result else "No result."
             parts.append(f"\n[{name.upper()} RESULT]\n{text}")
+            logging.info(f"\n[{name.upper()} RESULT]\n{text}")
         return "\n".join(parts)
 
     def close(self):

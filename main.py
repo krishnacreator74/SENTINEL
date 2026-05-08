@@ -9,6 +9,7 @@ Key components:
 - run_voice_loop: The main loop that listens for wake words, processes voice commands, and interacts with the AI pipeline. It uses the UIBridge to update the UI state and HUD based on voice interactions.
 """
 
+import os
 import sys
 import time
 import threading
@@ -26,14 +27,33 @@ from ui.widget import SentinelWidget
 from ui.menu import SentinelMenu
 from ui.hud import HUD
 from chat.window import ChatWindow
+import logging
 
 widget_ref   = [None]
 chat_win_ref = [None]
 stop_event   = threading.Event()
 
+def ensure_log_dir():
+    log_dir = "logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+ensure_log_dir()
 
 
-def run_voice_loop(pipeline, bridge, emitter=None):
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("logs/sentinel.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+
+# ── Voice loop ────────────────────────────────────────────────────────────────
+
+
+def run_voice_loop(pipeline, bridge, emitter):
     last_wake  = 0
     saved_gate = None
 
@@ -46,6 +66,7 @@ def run_voice_loop(pipeline, bridge, emitter=None):
             try:
                 saved_gate = wait_for_wake(silence_gate=saved_gate)
             except Exception as e:
+                logging.error(f"Wake loop error: {e}")
                 print("[Voice Loop Error]", e)
                 break
             last_wake = time.time()
@@ -112,7 +133,8 @@ def run_voice_loop(pipeline, bridge, emitter=None):
                 break
 
     except Exception as e:
-        print("[Wake Error]", e)
+        logging.error(f"Voice loop error: {e}")
+        print("[Voice Loop Error]", e)
 
 
 if __name__ == "__main__":
@@ -180,6 +202,7 @@ if __name__ == "__main__":
     ).start()
 
     print("Sentinel started.")
+    logging.info("Sentinel started.")
     exit_code = app.exec()
     stop_event.set()
     sys.exit(exit_code)

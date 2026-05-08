@@ -11,6 +11,8 @@ Key functions:
 """
 
 
+import logging
+
 from openwakeword.utils import AudioFeatures
 import sounddevice as sd
 import numpy as np
@@ -53,6 +55,7 @@ def wait_for_wake(silence_gate=None):
             noise_floor  = np.mean(readings)
             silence_gate = max(0.00005, noise_floor * 1.5)
             print(f"[calibrate] noise={noise_floor:.5f}  gate={silence_gate:.5f}")
+            logging.info(f"[calibrate] noise={noise_floor:.5f}  gate={silence_gate:.5f}")
             ears.set_thresholds(
                 speech  = max(0.0008, noise_floor * 3.0),
                 silence = max(0.0005, noise_floor * 2.0)
@@ -89,6 +92,7 @@ def wait_for_wake(silence_gate=None):
 
             if prob > 0.1:
                 print(f"\nprob={prob:.4f}  peak={peak_prob:.4f}")
+                logging.info(f"[wake] prob={prob:.4f}  peak={peak_prob:.4f}")
 
             # track rolling peak
             if prob > peak_prob:
@@ -107,7 +111,7 @@ def wait_for_wake(silence_gate=None):
 
             if len(confirm_times) >= 1:
                 print("\nWake word detected!")
-                
+                logging.info("[wake] Wake word detected!")
                 # # save the triggering audio for inspection
                 # os.makedirs("debug_triggers", exist_ok=True)
                 # trigger_audio = np.array(buffer, dtype=np.int16)

@@ -15,6 +15,7 @@ Fix: show_hud() called during load now shows immediately at full opacity.
      begin_sentence() never restarts a fade — it just ensures visibility.
 """
 
+import logging
 import os, sys, time, threading, urllib.request, re
 
 from PyQt6.QtWidgets import (
@@ -432,6 +433,7 @@ class SentinelHUD(QWidget):
                 self.signals.pixmap_ready.emit(pix)
             except Exception as e:
                 print(f"[HUD] Image error: {e}")
+                logging.error(f"[HUD] Image error: {e}")
         threading.Thread(target=_load, daemon=True).start()
 
     @pyqtSlot(QPixmap)
