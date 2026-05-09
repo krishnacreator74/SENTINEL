@@ -31,7 +31,10 @@ SEARCH_HARD_CAP = 7
 class Tool:
     name = "base"
 
-    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str,
+        emitter,
+        bridge,
+        context: dict | None = None) -> ToolResult:
         raise NotImplementedError
 
 
@@ -39,7 +42,10 @@ class Tool:
 class WebSearchTool(Tool):
     name = "search"
 
-    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str,
+        emitter,
+        bridge,
+        context: dict | None = None) -> ToolResult:
         ctx               = context or {}
         original_question = ctx.get("original_question", input_text)
         user_context      = load_user_context()
@@ -118,11 +124,14 @@ Reply with exactly one of:
 class OpenAppTool(Tool):
     name = "open_app"
 
-    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str,
+        emitter,
+        bridge,
+        context: dict | None = None) -> ToolResult:
         # Delegates to your existing launcher logic
         try:
             from system.commands import launch_app_from_command
-            launch_app_from_command(f"open {input_text}")
+            launch_app_from_command(f"open {input_text}", emitter, bridge)
             return ToolResult(text=f"Opened {input_text}.", images=[])
         except Exception as e:
             return ToolResult(text=f"Could not open {input_text}: {e}", images=[])
@@ -132,7 +141,10 @@ class OpenAppTool(Tool):
 class SystemCommandTool(Tool):
     name = "system_command"
 
-    def run(self, input_text: str, context: dict | None = None) -> ToolResult:
+    def run(self, input_text: str,
+        emitter,
+        bridge,
+        context: dict | None = None) -> ToolResult:
         import subprocess
         ALLOWED = {
             "shutdown":  ["shutdown", "/s", "/t", "5"],
@@ -160,7 +172,13 @@ register_tool(OpenAppTool())
 register_tool(SystemCommandTool())
 
 
-def run_tool_by_name(name: str, input_text: str, original_question: str = "") -> ToolResult:
+def run_tool_by_name(
+    name: str,
+    input_text: str,
+    emitter,
+    bridge,
+    original_question: str = ""
+    ) -> ToolResult:
     tool = TOOLS.get(name)
 
     if tool is None:
@@ -169,7 +187,9 @@ def run_tool_by_name(name: str, input_text: str, original_question: str = "") ->
     try:
         return tool.run(
             input_text,
-            context={"original_question": original_question}
+            context={"original_question": original_question},
+            emitter=emitter,
+            bridge=bridge
         )
     except Exception as e:
         return ToolResult(

@@ -30,7 +30,7 @@ class SentinelPipeline:
         self.ai     = ai
         self.memory = memory
 
-    def process(self, req: str, speak_fn=None, bridge=None, emitter=None):
+    def process(self, req: str,bridge, emitter, speak_fn=None):
         # HUD close command
         if _add_close_hud_command(req, emitter, bridge):
             return "__handled__"
@@ -53,6 +53,7 @@ class SentinelPipeline:
         result = self.ai.respond(
             messages,
             on_sentence=speak_fn,
+            emitter=emitter,
             bridge=bridge,
         )
 

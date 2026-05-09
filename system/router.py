@@ -57,7 +57,7 @@ def _clean(text: str) -> str:
     return text
 
 # ── App / system command routing (no LLM) ────────────────────────────────────
-def _add_close_hud_command(req: str, emitter=None, bridge=None) -> bool:
+def _add_close_hud_command(req: str, emitter, bridge) -> bool:
     """Returns True if command was handled."""
     triggers = ["close window", "close hud", "close panel",
                 "hide window", "hide display", "close display"]
@@ -68,7 +68,7 @@ def _add_close_hud_command(req: str, emitter=None, bridge=None) -> bool:
     
     return False
 
-def fast_route(text: str, emitter=None, bridge=None) -> bool:
+def fast_route(text: str, emitter, bridge) -> bool:
     """
     Handle app launches and system commands instantly with pure logic.
     Returns True if the command was handled (main loop should skip LLM).

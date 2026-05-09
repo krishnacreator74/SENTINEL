@@ -168,7 +168,7 @@ if __name__ == "__main__":
 #COMMAND: open_chrome
 
 
-def launch_app_from_command(command, emitter,bridge=None):
+def launch_app_from_command(command, emitter,bridge):
 
     command = command.replace("COMMAND:", "").strip().lower()
 

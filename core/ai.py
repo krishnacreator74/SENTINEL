@@ -122,7 +122,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 # ── HUD + voice delivery ───────────────────────────────────────────────────────
-def _speak(text: str, on_sentence, bridge=None, emitter=None,
+def _speak(text: str, on_sentence, bridge, emitter,
            use_hud: bool = False, title: str = "SENTINEL"):
     """
     Speaks `text` sentence by sentence, keeping HUD in sync.
@@ -179,10 +179,10 @@ class SentinelAI:
         except Exception as e:
             raise RuntimeError(f"[AI] Cannot reach LM Studio: {e}")
 
-    def _execute_tool(self, name: str, input_: str, original_question: str):
-        return run_tool_by_name(name, input_, original_question=original_question)
+    def _execute_tool(self, name: str, input_: str,emitter, bridge, original_question: str):
+        return run_tool_by_name(name, input_, emitter, bridge, original_question=original_question)
 
-    def respond(self, messages: list, on_sentence=None, bridge=None) -> dict:
+    def respond(self, messages: list, emitter, bridge, on_sentence=None) -> dict:
         """
         Main entry point.
 
@@ -216,14 +216,14 @@ class SentinelAI:
 
         # Speak pre-tool announcement ("Let me search that…")
         if response_text:
-            _speak(response_text, on_sentence, bridge,
+            _speak(response_text, on_sentence, bridge, emitter,
                    use_hud=use_hud and not awaiting)
 
         if not tools_requested or not awaiting:
             return {"text": response_text, "raw": result}
 
         # ── Run tools ──────────────────────────────────────────────────────────
-        tool_results = self._run_tools_parallel(tools_requested, messages)
+        tool_results = self._run_tools_parallel(tools_requested, messages, emitter, bridge)
 
         # ── Follow-up call with tool results ───────────────────────────────────
         tool_context = self._build_tool_context(tools_requested, tool_results)
@@ -246,7 +246,7 @@ class SentinelAI:
         final_text = final_result.get("response", "")
         final_hud  = True if len(final_text) > 80 else final_result.get("hud", False)
 
-        _speak(final_text, on_sentence, bridge, use_hud=final_hud, title="SENTINEL")
+        _speak(final_text, on_sentence, bridge, emitter, use_hud=final_hud, title="SENTINEL")
 
         # Inject images from search results into HUD
         all_images = []
@@ -264,7 +264,7 @@ class SentinelAI:
 
         return {"text": final_text, "raw": final_result}
 
-    def _run_tools_parallel(self, tools_requested: list, messages: list) -> list:
+    def _run_tools_parallel(self, tools_requested: list, messages: list, emitter, bridge) -> list:
         results = [None] * len(tools_requested)
 
         original_question = ""
@@ -273,12 +273,12 @@ class SentinelAI:
                 original_question = msg["content"]
                 break
 
-        def _run(idx, tool_def):
+        def _run(idx, tool_def, emitter=emitter, bridge=bridge):
             name   = tool_def.get("name", "")
             input_ = tool_def.get("input", "")
             print(f"[AI] Running tool '{name}' with input: '{input_}'")
             try:
-                results[idx] = self._execute_tool(name, input_, original_question)
+                results[idx] = self._execute_tool(name, input_, emitter, bridge, original_question)
             except Exception as e:
                 logging.error(f"Tool '{name}' error: {e}")
                 print(f"[AI] Tool '{name}' error: {e}")

@@ -12,7 +12,6 @@ HUD contract (sentence-glow model):
 from piper import PiperVoice
 import sounddevice as sd
 import numpy as np
-bridge = None
 
 _last_energy = 0.0
 
@@ -31,7 +30,7 @@ def set_sentence_idx(idx: int):
     _current_sentence_idx = idx
 
 
-def voice_of_ai(text: str, emitter,bridge=None):
+def voice_of_ai(text: str, emitter,bridge):
     global _current_sentence_idx, _last_energy
 
     idx = _current_sentence_idx
