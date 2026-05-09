@@ -59,10 +59,12 @@ class ChatWindow(QWidget):
 
         self._anim = anim
 
-    def __init__(self, ai, chat_memory, on_close=None):
+    def __init__(self, ai, chat_memory, emitter, bridge, on_close=None):
         super().__init__()
         self._ai       = ai
         self._memory   = chat_memory
+        self._emitter  = emitter
+        self._bridge   = bridge
         self._on_close = on_close
         self._busy     = False
         self._drag_pos = None
@@ -179,7 +181,7 @@ class ChatWindow(QWidget):
         from core.ai import build_system_prompt, run_memory_async
         from system.router import fast_route
 
-        if fast_route(user_text):
+        if fast_route(user_text, self._emitter, self._bridge):
             import time
             time.sleep(0.3)  # small delay for realism
 

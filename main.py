@@ -166,6 +166,8 @@ if __name__ == "__main__":
     chat_win        = ChatWindow(
         ai=chat_ai,
         chat_memory=shared_memory,
+        emitter=emitter,
+        bridge=bridge,
         on_close=_on_chat_closed,
     )
     chat_win_ref[0] = chat_win
