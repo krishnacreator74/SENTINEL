@@ -1,4 +1,10 @@
-Dynamic memory
-GUI CONTROL
-terminal CONTROL
-Session Memory
+FIXES REQUIRED:
+    Chatwindow.py doesnt have emitter somewhere
+    allways scans and doesnt check known_apps
+
+Features:
+
+    Dynamic memory
+    GUI CONTROL
+    terminal CONTROL
+    Session Memory

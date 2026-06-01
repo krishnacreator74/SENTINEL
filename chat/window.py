@@ -197,15 +197,20 @@ class ChatWindow(QWidget):
         messages = [{"role": "system", "content": build_system_prompt()}]
         messages += self._memory.get_messages()
 
-        response = self._ai.respond(messages)
+        response = self._ai.respond(messages, self._emitter, self._bridge)
 
-        self._memory.add_assistant(response)
-        run_memory_async(user_text, response)
+        response_text = response["text"]
+
+        response_text = response["text"]
+
+        self._memory.add_assistant(response_text)
+        
+        run_memory_async(response)
 
         QMetaObject.invokeMethod(
             self, "_on_ai_response_slot",
             Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, response)
+            Q_ARG(str, response_text)
         )
 
     @pyqtSlot(str)
